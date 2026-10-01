@@ -208,7 +208,7 @@ async fn verify_resume_tail(
         return false;
     }
 
-    let req = apply_cookie(
+    let req = apply_media_cookie(
         client
             .get(url)
             .header(
@@ -217,7 +217,8 @@ async fn verify_resume_tail(
             )
             .header(header::REFERER, REFERER)
             .timeout(Duration::from_secs(SEGMENT_STALL_TIMEOUT_SECS)),
-        cookie,
+        url,
+        cookie.as_deref(),
     );
     let resp = match req.send().await {
         Ok(r) => r,
@@ -302,6 +303,7 @@ fn decide_slow_action(received: u64, seg_remaining: u64, slow_resumes: u8) -> Sl
 pub fn build_download_client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
+        .redirect(cookie_safe_redirect_policy())
         // Overall request timeout. CDN rotation handles truly stuck
         // transfers.
         .timeout(Duration::from_secs(120))
@@ -410,25 +412,65 @@ fn to_segment_disk_error(e: std::io::Error) -> SegmentError {
     SegmentError::DiskError(map_io_error(e))
 }
 
-/// Adds a Cookie header to a request builder when credentials are supplied.
+/// Adds a Cookie header only for HTTPS requests to Bilibili authentication hosts.
 ///
-/// This is a no-op when `cookie` is `None` or empty. Returns the modified
-/// `RequestBuilder` for chaining.
+/// CDN media URLs are signed; they must not receive the user's session cookies,
+/// even when supplied by the playurl API. Reqwest drops sensitive headers on
+/// cross-origin redirects from an allowed host.
 ///
 /// # Arguments
 ///
 /// * `req` - Request builder to attach the header to
+/// * `url` - URL used to construct the request
 /// * `cookie` - Optional cookie header value
-pub(crate) fn apply_cookie(mut req: RequestBuilder, cookie: &Option<String>) -> RequestBuilder {
-    // Why the is_empty guard: the doc contract says None OR empty is a
-    // no-op, but the original impl set an empty Cookie header for Some("")
-    // — harmless for Bilibili but a needless header; aligned to the doc.
-    if let Some(c) = cookie {
-        if !c.is_empty() {
-            req = req.header(header::COOKIE, c);
-        }
+pub(crate) fn apply_media_cookie(
+    mut req: RequestBuilder,
+    url: &str,
+    cookie: Option<&str>,
+) -> RequestBuilder {
+    if let Some(c) = cookie.filter(|c| !c.is_empty() && allows_media_cookie(url)) {
+        req = req.header(header::COOKIE, c);
     }
     req
+}
+
+/// Blocks downgrades where reqwest would forward a Bilibili Cookie.
+/// Cross-host/port redirects already drop sensitive headers and retain
+/// their usual behavior, as do signed CDN URLs without cookies.
+pub(crate) fn cookie_safe_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt
+            .previous()
+            .last()
+            .is_some_and(|previous| is_cookie_downgrade(previous, attempt.url()))
+        {
+            attempt.error(std::io::Error::other("Refusing HTTPS downgrade"))
+        } else if attempt.previous().len() > 10 {
+            attempt.error(std::io::Error::other("Too many redirects"))
+        } else {
+            attempt.follow()
+        }
+    })
+}
+
+fn is_cookie_downgrade(previous: &reqwest::Url, next: &reqwest::Url) -> bool {
+    is_trusted_bilibili_auth_origin(previous)
+        && next.scheme() != "https"
+        && next.host_str() == previous.host_str()
+        && next.port_or_known_default() == previous.port_or_known_default()
+}
+
+fn allows_media_cookie(url: &str) -> bool {
+    reqwest::Url::parse(url).is_ok_and(|url| is_trusted_bilibili_auth_origin(&url))
+}
+
+fn is_trusted_bilibili_auth_origin(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url.port_or_known_default() == Some(443)
+        && matches!(
+            url.host_str(),
+            Some("api.bilibili.com" | "www.bilibili.com" | "passport.bilibili.com")
+        )
 }
 
 /// Checks whether a download cancellation has been requested.
@@ -608,7 +650,7 @@ fn content_range_start(value: &header::HeaderValue) -> Option<u64> {
 /// * `url` - Primary CDN URL to download from
 /// * `backup_urls` - Optional list of backup CDN URLs for rotation
 /// * `output_path` - Destination file path
-/// * `cookie` - Optional Cookie header value for authenticated requests
+/// * `cookie` - Optional session cookie, sent only to trusted HTTPS API hosts
 /// * `is_override` - When `true`, overwrites an existing file; otherwise
 ///   returns `ERR::FILE_EXISTS`
 /// * `download_id` - Optional unique ID used to register a cancellation
@@ -887,7 +929,7 @@ pub async fn download_url<R: Runtime>(
                         .header(header::RANGE, format!("bytes={}-{}", seg_start, e))
                         .header(header::REFERER, REFERER),
                 );
-                let req = apply_cookie(req_builder, &cookie_c);
+                let req = apply_media_cookie(req_builder, current_url, cookie_c.as_deref());
                 match req.send().await {
                     Ok(mut resp) => {
                         // Validate response status
@@ -1718,7 +1760,7 @@ async fn download_segment_stream(
 /// * `url` - URL to download (CDN rotation is not applied in fallback mode)
 /// * `_backup_urls` - Unused; backup URLs cannot be used without range support
 /// * `output_path` - Destination file path
-/// * `cookie` - Optional Cookie header value for authenticated requests
+/// * `cookie` - Optional session cookie, sent only to trusted HTTPS API hosts
 /// * `is_override` - When `true`, overwrites an existing file; otherwise
 ///   returns `ERR::FILE_EXISTS`
 /// * `download_id` - Optional unique ID used for cancellation registration
@@ -1771,7 +1813,7 @@ async fn single_stream_fallback<R: Runtime>(
     // in the chunk loop below.
     let req_builder =
         with_limited_request_timeout(client.get(&url).header(header::REFERER, REFERER));
-    let req = apply_cookie(req_builder, &cookie);
+    let req = apply_media_cookie(req_builder, &url, cookie.as_deref());
     let mut resp = req.send().await?;
     // Reject non-success statuses before streaming to disk. CAUTION: the
     // media guard below cannot catch bare 4xx/5xx — is_media_content_type
@@ -2472,22 +2514,114 @@ mod tests {
     }
 
     #[test]
-    fn apply_cookie_sets_header_only_when_present() {
+    fn apply_media_cookie_restricts_credentials_to_trusted_https_hosts() {
         let client = reqwest::Client::new();
-        let with = apply_cookie(client.get("http://x/"), &Some("SESSDATA=y".into()))
-            .build()
-            .unwrap();
-        assert_eq!(with.headers().get(header::COOKIE).unwrap(), "SESSDATA=y");
+        for url in [
+            "https://api.bilibili.com/media",
+            "https://www.bilibili.com/media",
+            "https://passport.bilibili.com/media",
+            "https://API.BILIBILI.COM:443/media",
+        ] {
+            let request = apply_media_cookie(client.get(url), url, Some("SESSDATA=y"))
+                .build()
+                .unwrap();
+            assert_eq!(
+                request.headers().get(header::COOKIE).unwrap(),
+                "SESSDATA=y",
+                "{url}"
+            );
+        }
 
-        let without = apply_cookie(client.get("http://x/"), &None)
-            .build()
-            .unwrap();
-        assert!(without.headers().get(header::COOKIE).is_none());
+        for url in [
+            "https://upos-hz-mirrorakam.akamaized.net/media",
+            "https://upos-sz-mirror08h.bilivideo.com/media",
+            "https://api.bilibili.com.evil.test/media",
+            "https://evilbilibili.com/media",
+            "https://other.api.bilibili.com/media",
+            "https://api.bilibili.com@evil.test/media",
+            "http://api.bilibili.com/media",
+            "https://api.bilibili.com:8443/media",
+            "https://127.0.0.1/media",
+        ] {
+            let request = apply_media_cookie(client.get(url), url, Some("SESSDATA=y"))
+                .build()
+                .unwrap();
+            assert!(request.headers().get(header::COOKIE).is_none(), "{url}");
+        }
 
-        let empty = apply_cookie(client.get("http://x/"), &Some(String::new()))
-            .build()
+        let url = "https://api.bilibili.com/media";
+        for cookie in [None, Some("")] {
+            let request = apply_media_cookie(client.get(url), url, cookie)
+                .build()
+                .unwrap();
+            assert!(request.headers().get(header::COOKIE).is_none());
+        }
+        assert!(!allows_media_cookie("invalid URL"));
+    }
+
+    #[test]
+    fn redirect_policy_rejects_cookie_downgrades_but_allows_cdn_redirects() {
+        let https = reqwest::Url::parse("https://api.bilibili.com:443/media").unwrap();
+        let http_same_port = reqwest::Url::parse("http://api.bilibili.com:443/media").unwrap();
+        let http_default_port = reqwest::Url::parse("http://api.bilibili.com/media").unwrap();
+        let https_other = reqwest::Url::parse("https://www.bilibili.com/media").unwrap();
+        let cdn = reqwest::Url::parse("https://upos.bilivideo.com/media").unwrap();
+        let http_other_host = reqwest::Url::parse("http://cdn.example.com/media").unwrap();
+
+        assert!(is_cookie_downgrade(&https, &http_same_port));
+        assert!(!is_cookie_downgrade(&https, &http_default_port));
+        assert!(!is_cookie_downgrade(&https, &http_other_host));
+        assert!(!is_cookie_downgrade(&https, &https_other));
+        assert!(!is_cookie_downgrade(&http_default_port, &https));
+        assert!(!is_cookie_downgrade(&cdn, &http_default_port));
+    }
+
+    #[tokio::test]
+    async fn download_client_strips_cookie_on_cross_origin_redirect() {
+        let first = wiremock::MockServer::start().await;
+        let second = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::path("/start"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(302)
+                    .insert_header("Location", &format!("{}/media", second.uri())),
+            )
+            .mount(&first)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::path("/media"))
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .mount(&second)
+            .await;
+
+        build_download_client()
+            .get(format!("{}/start", first.uri()))
+            .header(header::COOKIE, "SESSDATA=y")
+            .send()
+            .await
             .unwrap();
-        assert!(empty.headers().get(header::COOKIE).is_none());
+        let requests = second.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].headers.get("cookie").is_none());
+    }
+
+    #[tokio::test]
+    async fn download_client_keeps_default_redirect_limit() {
+        let server = wiremock::MockServer::start().await;
+        for hop in 0..11 {
+            wiremock::Mock::given(wiremock::matchers::path(format!("/hop/{hop}")))
+                .respond_with(
+                    wiremock::ResponseTemplate::new(302)
+                        .insert_header("Location", format!("/hop/{}", hop + 1)),
+                )
+                .mount(&server)
+                .await;
+        }
+
+        let response = build_download_client()
+            .get(format!("{}/hop/0", server.uri()))
+            .send()
+            .await;
+        assert!(response.is_err(), "more than ten redirects must fail");
+        assert_eq!(server.received_requests().await.unwrap().len(), 11);
     }
 
     #[test]
@@ -2653,7 +2787,7 @@ mod tests {
             server.uri(),
             None,
             path.clone(),
-            None,
+            Some("SESSDATA=y".into()),
             false,
             None,
             None,
@@ -2665,6 +2799,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(std::fs::read(&path).unwrap(), body, "byte-exact output");
+        let requests = server.received_requests().await.unwrap();
+        assert!(requests.len() >= 2);
+        assert!(
+            requests.iter().all(|r| r.headers.get("cookie").is_none()),
+            "CDN probe and segmented requests must not receive session cookies"
+        );
     }
 
     #[tokio::test]
@@ -3207,7 +3347,7 @@ mod tests {
             server.uri(),
             None,
             path.clone(),
-            None,
+            Some("SESSDATA=y".into()),
             true,
             None,
             Some("video"),
@@ -3218,6 +3358,12 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), body);
+        let requests = server.received_requests().await.unwrap();
+        assert!(requests.len() >= 2);
+        assert!(
+            requests.iter().all(|r| r.headers.get("cookie").is_none()),
+            "CDN probe and fallback must not receive session cookies"
+        );
     }
 
     // ---- raw-TCP scripted server: mid-stream breaks wiremock cannot do ----

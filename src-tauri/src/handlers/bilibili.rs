@@ -159,7 +159,7 @@ pub struct DownloadOptions {
 }
 
 use crate::constants::{API_BASE, PLAYURL_FNVAL, PLAYURL_QN, REFERER};
-use crate::handlers::cookie::read_cookie;
+use crate::handlers::cookie::{is_bilibili_cookie_domain, read_cookie};
 use crate::handlers::history_session::HistorySession;
 use crate::handlers::settings;
 use crate::models::bilibili_api::{
@@ -173,7 +173,7 @@ use crate::models::frontend_dto::{
     WatchHistoryCursor, WatchHistoryEntry,
 };
 use crate::models::settings::Settings;
-use crate::utils::downloads::download_url;
+use crate::utils::downloads::{apply_media_cookie, cookie_safe_redirect_policy, download_url};
 use crate::utils::paths::get_lib_path;
 use crate::{constants::USER_AGENT, models::frontend_dto::User};
 use reqwest::header;
@@ -210,6 +210,7 @@ use tauri::AppHandle;
 pub fn build_client() -> Result<Client, String> {
     Client::builder()
         .user_agent(USER_AGENT)
+        .redirect(cookie_safe_redirect_policy())
         .build()
         .map_err(|e| format!("failed to build client: {e}"))
 }
@@ -1896,9 +1897,12 @@ mod tests {
             .mount(&server)
             .await;
         assert_eq!(
-            head_content_length_with(&Client::new(), &server.uri(), None).await,
+            head_content_length_with(&Client::new(), &server.uri(), Some("SESSDATA=y")).await,
             Some(4096)
         );
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].headers.get("cookie").is_none());
     }
 
     #[tokio::test]
@@ -3213,6 +3217,16 @@ mod tests {
                 name: "buvid3".into(),
                 value: "y".into(),
             },
+            CookieEntry {
+                host: "evilbilibili.com".into(),
+                name: "LOOKALIKE".into(),
+                value: "ignored".into(),
+            },
+            CookieEntry {
+                host: "bilibili.com.evil.test".into(),
+                name: "SUFFIX".into(),
+                value: "ignored".into(),
+            },
         ];
         assert_eq!(build_cookie_header(&cookies), "SESSDATA=abc; buvid3=y");
         assert_eq!(build_cookie_header(&[]), "");
@@ -4526,7 +4540,7 @@ async fn fetch_user_info_with(api: &BiliApi) -> Result<User, String> {
 fn build_cookie_header(cookies: &[CookieEntry]) -> String {
     cookies
         .iter()
-        .filter(|c| c.host.ends_with("bilibili.com"))
+        .filter(|c| is_bilibili_cookie_domain(&c.host))
         .map(|c| format!("{}={}", c.name, c.value))
         .collect::<Vec<_>>()
         .join("; ")
@@ -5356,7 +5370,7 @@ fn build_output_path_in(dl_output_path: Option<&str>, filename: &str) -> Result<
 /// # Arguments
 ///
 /// * `url` - URL to check
-/// * `cookie` - Optional cookie header for authentication
+/// * `cookie` - Optional session cookie, sent only to trusted HTTPS API hosts
 ///
 /// # Returns
 ///
@@ -5368,11 +5382,10 @@ async fn head_content_length(url: &str, cookie: Option<&str>) -> Option<u64> {
 
 /// Client-injected split of [`head_content_length`] (test seam: wiremock).
 async fn head_content_length_with(client: &Client, url: &str, cookie: Option<&str>) -> Option<u64> {
-    let mut req = client.head(url);
-    if let Some(c) = cookie {
-        req = req.header(reqwest::header::COOKIE, c);
-    }
-    let response = req.send().await.ok()?;
+    let response = apply_media_cookie(client.head(url), url, cookie)
+        .send()
+        .await
+        .ok()?;
 
     // Only accept successful responses (200 OK)
     if !response.status().is_success() {

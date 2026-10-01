@@ -25,14 +25,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Why checks/issues write: reviewdog github-pr-review needs them for
-# review comments and its Check-annotation fallback for findings outside
-# the PR diff (per reviewdog/action-suggester upstream requirements)
+# Reviewdog needs checks/issues/pull-requests write for suggestions and
+# findings outside the PR diff. Grant those only to reporting jobs.
 permissions:
-  contents: write
-  checks: write
-  issues: write
-  pull-requests: write
+  contents: read
 
 jobs:
   format:
@@ -40,6 +36,11 @@ jobs:
     runs-on: ubuntu-latest
     if: github.head_ref != 'release-please--branches--main'
     timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: write
+      issues: write
+      pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -67,7 +68,7 @@ jobs:
         # Why cleanup:false: keeps the formatted state so the gate step
         # below sees the full diff (filter-mode only limits which hunks
         # get suggestion cards, not which violations fail the job)
-        uses: reviewdog/action-suggester@v1
+        uses: reviewdog/action-suggester@d8a7baabd7f3e8544ee4dbde3ee41d0011c3a93f # v1
         with:
           tool_name: prettier
           level: error
@@ -82,6 +83,11 @@ jobs:
     runs-on: ubuntu-latest
     if: github.head_ref != 'release-please--branches--main'
     timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: write
+      issues: write
+      pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -103,7 +109,7 @@ jobs:
         run: npm ci
 
       - name: Setup reviewdog
-        uses: reviewdog/action-setup@v1
+        uses: reviewdog/action-setup@c387862ad6765a9729f2b40ee4d8b5769f2145c7 # v1
 
       # Why pipefail: eslint's exit code must survive the pipe so the
       # gate semantics match `npm run lint` (fail on any error anywhere,
@@ -202,7 +208,7 @@ jobs:
         # Why the guard: upload only when the test step actually produced
         # lcov, mirroring the step above
         if: hashFiles('coverage/lcov.info') != ''
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v7
         with:
           files: coverage/lcov.info
           flags: frontend
@@ -221,10 +227,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri
           shared-key: rust-ci
@@ -253,15 +259,20 @@ jobs:
     runs-on: ubuntu-latest
     if: github.head_ref != 'release-please--branches--main'
     timeout-minutes: 30
+    permissions:
+      contents: read
+      checks: write
+      issues: write
+      pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri
           shared-key: rust-ci
@@ -282,7 +293,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev libglib2.0-dev
 
       - name: Setup reviewdog
-        uses: reviewdog/action-setup@v1
+        uses: reviewdog/action-setup@c387862ad6765a9729f2b40ee4d8b5769f2145c7 # v1
 
       # Why pipefail: cargo's exit code must survive the pipes so the
       # gate matches plain `cargo clippy -- -D warnings` (any denied lint
@@ -336,10 +347,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri
           shared-key: rust-ci
@@ -368,15 +379,20 @@ jobs:
     runs-on: ubuntu-latest
     if: github.head_ref != 'release-please--branches--main'
     timeout-minutes: 30
+    permissions:
+      contents: read
+      checks: write
+      issues: write
+      pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri
           shared-key: rust-ci
@@ -404,7 +420,7 @@ jobs:
         # Why cleanup:false: keeps the formatted state so the gate step
         # below sees the full diff (filter-mode only limits which hunks
         # get suggestion cards, not which violations fail the job)
-        uses: reviewdog/action-suggester@v1
+        uses: reviewdog/action-suggester@d8a7baabd7f3e8544ee4dbde3ee41d0011c3a93f # v1
         with:
           tool_name: rustfmt
           level: error
@@ -431,15 +447,17 @@ jobs:
       - name: Install Rust nightly
         # Why nightly: cargo-llvm-cov relies on -Zinstrument-coverage,
         # which is not stable yet
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly
+        with:
+          toolchain: nightly
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v2
         with:
           tool: cargo-llvm-cov
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri
           # Why: nightly build artifacts must not share a cache with the
@@ -480,7 +498,7 @@ jobs:
       - name: Upload rust coverage to Codecov
         # Why before the threshold step: the report is uploaded even when
         # coverage is below target, so codecov shows the regression
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v7
         with:
           files: src-tauri/codecov-normalized.json
           flags: rust
@@ -524,6 +542,11 @@ jobs:
     runs-on: ubuntu-latest
     if: github.head_ref != 'release-please--branches--main'
     timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: write
+      issues: write
+      pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -553,7 +576,7 @@ jobs:
         # Why cleanup:false: keeps the formatted state so the gate step
         # below sees the full diff (filter-mode only limits which hunks
         # get suggestion cards, not which violations fail the job)
-        uses: reviewdog/action-suggester@v1
+        uses: reviewdog/action-suggester@d8a7baabd7f3e8544ee4dbde3ee41d0011c3a93f # v1
         with:
           tool_name: prettier-docs
           level: error

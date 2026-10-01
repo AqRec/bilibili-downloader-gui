@@ -115,6 +115,9 @@ PR guidelines:
 - **Socket Security scans dependency changes on every PR** (npm + Cargo
   manifests) for supply-chain risk such as malware and typosquats —
   its check is required; known malware fails it and blocks the merge
+- Pin third-party GitHub Actions to full commit SHAs, with the upstream
+  version or branch in a comment so updates remain reviewable. Grant
+  workflow write permissions only to jobs that need them.
 
 ## Project Structure
 
@@ -180,6 +183,11 @@ src-tauri/src/
 - New commands must be registered in the `invoke_handler`
   (`generate_handler!`) in `src-tauri/src/lib.rs`
 - Dev-only features are gated behind `#[cfg(debug_assertions)]`
+- Media fetches (HEAD, CDN probe, segments, and fallback) must go through
+  `apply_media_cookie`: signed CDN URLs must not receive session cookies;
+  only designated HTTPS Bilibili authentication hosts may receive them.
+  Keep `cookie_safe_redirect_policy` on their HTTP clients to prevent
+  HTTPS-to-HTTP redirects from forwarding cookies.
 
 ### Architecture Diagram (docs site)
 

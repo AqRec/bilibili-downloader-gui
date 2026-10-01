@@ -18,7 +18,9 @@
 use crate::constants::{
     CDN_PROBE_BYTES, CDN_PROBE_CONCURRENCY, CDN_PROBE_TIMEOUT_SECS, REFERER, USER_AGENT,
 };
-use crate::utils::downloads::{apply_cookie, is_media_content_type};
+use crate::utils::downloads::{
+    apply_media_cookie, cookie_safe_redirect_policy, is_media_content_type,
+};
 use futures::stream::{FuturesUnordered, StreamExt};
 use reqwest::header;
 use std::collections::HashSet;
@@ -355,13 +357,14 @@ async fn probe_single(
 ) -> ProbeResult {
     let start = Instant::now();
 
-    let range_req = apply_cookie(
+    let range_req = apply_media_cookie(
         client
             .get(url)
             .header(header::RANGE, format!("bytes=0-{}", CDN_PROBE_BYTES - 1))
             .header(header::REFERER, REFERER)
             .timeout(Duration::from_secs(CDN_PROBE_TIMEOUT_SECS)),
-        cookie,
+        url,
+        cookie.as_deref(),
     );
 
     let mut throughput_bps: Option<u64> = None;
@@ -470,6 +473,7 @@ pub async fn select_best_cdns(
     //   latency, which would defeat the purpose of ranking by responsiveness.
     let client = match reqwest::Client::builder()
         .user_agent(USER_AGENT)
+        .redirect(cookie_safe_redirect_policy())
         .timeout(Duration::from_secs(CDN_PROBE_TIMEOUT_SECS))
         .build()
     {

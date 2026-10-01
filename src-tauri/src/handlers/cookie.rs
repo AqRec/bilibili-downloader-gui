@@ -296,6 +296,12 @@ pub async fn get_cookie(app: &AppHandle) -> Result<bool, String> {
     Ok(has_any)
 }
 
+/// Accepts only the Bilibili cookie domain and its subdomains.
+pub(crate) fn is_bilibili_cookie_domain(host: &str) -> bool {
+    host.eq_ignore_ascii_case("bilibili.com")
+        || host.to_ascii_lowercase().ends_with(".bilibili.com")
+}
+
 /// Reads Bilibili cookies from the copied SQLite database into the given map.
 ///
 /// Returns `true` if at least one Bilibili cookie was found.
@@ -316,7 +322,7 @@ fn read_bilibili_cookies(
     let mut count = 0usize;
     for row in rows {
         let (host, name, value) = row?;
-        if host == "bilibili.com" || host.ends_with(".bilibili.com") {
+        if is_bilibili_cookie_domain(&host) {
             cookies.insert(name, value);
             count += 1;
         }
@@ -432,19 +438,22 @@ mod tests {
             &[
                 (".bilibili.com", "SESSDATA", "sess-val"),
                 ("bilibili.com", "bili_jct", "jct-val"),
+                ("API.BILIBILI.COM", "buvid3", "device-val"),
                 ("www.example.com", "other", "ignored"),
                 ("evilbilibili.com", "lookalike", "ignored"),
+                ("bilibili.com.evil.test", "suffix", "ignored"),
             ],
         );
 
         let mut cookies = HashMap::new();
         let has_any = read_bilibili_cookies(&db, &mut cookies).unwrap();
         assert!(has_any);
-        assert_eq!(cookies.len(), 2, "non-bilibili hosts filtered out");
+        assert_eq!(cookies.len(), 3, "non-bilibili hosts filtered out");
         assert_eq!(cookies.get("SESSDATA").unwrap(), "sess-val");
         assert_eq!(cookies.get("bili_jct").unwrap(), "jct-val");
+        assert_eq!(cookies.get("buvid3").unwrap(), "device-val");
         assert!(
-            !cookies.contains_key("lookalike"),
+            !cookies.contains_key("lookalike") && !cookies.contains_key("suffix"),
             "suffix must not match mid-label"
         );
     }
