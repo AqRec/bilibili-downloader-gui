@@ -43,6 +43,16 @@ describe('extractContentId', () => {
     expect(extractContentId('https://www.bilibili.com/space/12345')).toBeNull()
   })
 
+  it('extracts standalone audio IDs only from canonical au URLs', () => {
+    expect(
+      extractContentId('https://www.bilibili.com/audio/au821521?from=search'),
+    ).toEqual({ type: 'audio', id: '821521' })
+    expect(extractContentId('https://example.com/audio/au821521')).toBeNull()
+    expect(
+      extractContentId('https://www.bilibili.com/audio/au821521/other'),
+    ).toBeNull()
+  })
+
   it('returns null for an invalid URL string', () => {
     expect(extractContentId('not-a-url')).toBeNull()
     expect(extractContentId('')).toBeNull()

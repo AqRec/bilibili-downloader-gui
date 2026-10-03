@@ -155,4 +155,17 @@ describe('HistoryItem', () => {
       screen.queryByRole('button', { name: 'watchHistory.download' }),
     ).toBeNull()
   })
+
+  it('lets the user re-download a standalone au song without a bvid', async () => {
+    const { user, onDownload } = renderEntry({
+      bvid: undefined,
+      url: 'https://www.bilibili.com/audio/au821521',
+      quality: 'FLAC',
+    })
+    await user.click(
+      screen.getByRole('button', { name: 'watchHistory.download' }),
+    )
+    expect(onDownload).toHaveBeenCalledOnce()
+    expect(screen.getByText('FLAC')).toBeInTheDocument()
+  })
 })

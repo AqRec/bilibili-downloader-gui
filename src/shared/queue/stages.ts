@@ -92,12 +92,13 @@ export function pickStageData(
   const videoPct = video?.percentage ?? (merge ? 100 : 0)
   const mergePct = merge?.percentage ?? 0
   const mergeShare = expected.mergeStage ? MERGE_SHARE : 0
-  // Remaining share split evenly between video and (if expected) audio.
-  const streamShare = (1 - mergeShare) / (expected.audioStage ? 2 : 1)
+  const hasVideo = expected.videoStage !== false
+  const streamCount = Number(expected.audioStage) + Number(hasVideo)
+  const streamShare = (1 - mergeShare) / Math.max(streamCount, 1)
   return {
     percentage:
       (expected.audioStage ? streamShare * audioPct : 0) +
-      streamShare * videoPct +
+      (hasVideo ? streamShare * videoPct : 0) +
       mergeShare * mergePct,
     audio: audio
       ? { percentage: audio.percentage, transferRate: audio.transferRate }

@@ -1,5 +1,6 @@
 import { isUnauthorizedError } from '@/app/lib/invokeErrorHandler'
 import { store, useSelector, type RootState } from '@/app/store'
+import { fetchSongInfo, type SongInfo } from '@/features/song'
 import {
   useLazyFetchBangumiInfoQuery,
   useLazyFetchVideoInfoQuery,
@@ -21,7 +22,7 @@ import {
   updatePartSelected,
 } from '@/features/video/model/inputSlice'
 import { selectDuplicateIndices } from '@/features/video/model/selectors'
-import { setVideo } from '@/features/video/model/videoSlice'
+import { resetVideo, setVideo } from '@/features/video/model/videoSlice'
 import { logger } from '@/shared/lib/logger'
 import { mapBackendError } from '@/shared/lib/mapBackendError'
 import { enqueueSession, type EnqueuePartSpec } from '@/shared/queue'
@@ -70,6 +71,7 @@ function extractPageFromUrl(url: string): number | null {
 export type VideoInfoContextValue = {
   progress: RootState['progress']
   video: Video
+  song: SongInfo | null
   input: Input
   onValid1: (url: string, opts?: { silent?: boolean }) => Promise<boolean>
   onValid2: (
@@ -89,9 +91,11 @@ export type VideoInfoContextValue = {
   duplicateIndices: number[]
   selectedCount: number
   isFetching: boolean
+  isFetchingSong: boolean
   /** True while a debounced auto-fetch (input pause) is in flight. */
   isSilentFetching: boolean
   download: () => Promise<void>
+  downloadSong: () => void
 }
 
 /**
@@ -151,11 +155,14 @@ export function VideoInfoProvider({ children }: VideoInfoProviderProps) {
   const saveAudioWithVideo = useSelector(
     (state) => state.settings.saveAudioWithVideo ?? false,
   )
+  const [song, setSong] = useState<SongInfo | null>(null)
+  const [isFetchingSong, setIsFetchingSong] = useState(false)
+  const songFetchCountRef = useRef(0)
   const [triggerFetch, { isFetching: isFetchingVideo }] =
     useLazyFetchVideoInfoQuery()
   const [triggerFetchBangumi, { isFetching: isFetchingBangumi }] =
     useLazyFetchBangumiInfoQuery()
-  const isFetching = isFetchingVideo || isFetchingBangumi
+  const isFetching = isFetchingVideo || isFetchingBangumi || isFetchingSong
   const [isSilentFetching, setIsSilentFetching] = useState(false)
   // Ref-count of in-flight silent fetches: overlapping silent fetches are
   // possible (user pauses on URL A, resumes typing, pauses on URL B before
@@ -228,9 +235,12 @@ export function VideoInfoProvider({ children }: VideoInfoProviderProps) {
   const onValid1 = useCallback(
     async (url: string, opts?: { silent?: boolean }): Promise<boolean> => {
       const silent = opts?.silent ?? false
-      const failToast = (description: string | null | undefined) => {
+      const failToast = (
+        description: string | null | undefined,
+        titleKey = 'video.fetch_info',
+      ) => {
         if (silent || !description) return
-        toast.error(t('video.fetch_info'), {
+        toast.error(t(titleKey), {
           duration: 5000,
           description,
         })
@@ -276,6 +286,42 @@ export function VideoInfoProvider({ children }: VideoInfoProviderProps) {
       // Clear all selections when navigating to a new video via URL input
       store.dispatch(deselectAll())
 
+      if (contentId.type === 'audio') {
+        setSong(null)
+        store.dispatch(resetVideo())
+        store.dispatch(initPartInputs([]))
+        songFetchCountRef.current += 1
+        setIsFetchingSong(true)
+        if (silent) {
+          silentFetchCountRef.current += 1
+          setIsSilentFetching(true)
+        }
+        try {
+          const info = await fetchSongInfo(Number(contentId.id))
+          if (store.getState().input.url !== url) return false
+          setSong(info)
+          return true
+        } catch (error) {
+          const raw = String(error)
+          const key = mapBackendError(raw)
+          const description = key
+            ? t(key)
+            : isUnauthorizedError(raw)
+              ? null
+              : raw
+          failToast(description, 'song.fetchFailed')
+          logger.error('Failed to fetch standalone song', raw)
+          return false
+        } finally {
+          songFetchCountRef.current -= 1
+          if (songFetchCountRef.current === 0) setIsFetchingSong(false)
+          if (silent) {
+            silentFetchCountRef.current -= 1
+            if (silentFetchCountRef.current === 0) setIsSilentFetching(false)
+          }
+        }
+      }
+      setSong(null)
       let fetchResult: { data?: Video; error?: unknown }
 
       if (silent) {
@@ -354,7 +400,7 @@ export function VideoInfoProvider({ children }: VideoInfoProviderProps) {
   // Memoized on the raw inputs so consumers get a stable string.
   const videoId = useMemo(() => {
     const contentId = extractContentId(input.url)
-    if (!contentId) return null
+    if (!contentId || contentId.type === 'audio') return null
     return contentId.type === 'video'
       ? contentId.id
       : `av${video.parts[0]?.aid ?? ''}`
@@ -502,9 +548,43 @@ export function VideoInfoProvider({ children }: VideoInfoProviderProps) {
     t,
   ])
 
+  const downloadSong = useCallback(() => {
+    if (!song) return
+    store.dispatch(
+      enqueueSession({
+        contentType: 'audio',
+        videoId: `au${song.id}`,
+        videoTitle: song.title,
+        parts: [
+          {
+            partIndex: 1,
+            title: song.title,
+            thumbnailUrl: song.cover,
+            expectedStages: {
+              audioStage: true,
+              videoStage: false,
+              mergeStage: false,
+            },
+            payload: {
+              kind: 'audio',
+              songId: song.id,
+              filename: song.title,
+              durationSeconds: song.duration,
+              thumbnailUrl: song.cover,
+              page: null,
+              expectedQuality: song.audioQuality,
+              format: song.format,
+            },
+          },
+        ],
+      }),
+    )
+  }, [song])
+
   const value: VideoInfoContextValue = {
     progress,
     video,
+    song,
     input,
     videoId,
     onValid1,
@@ -514,8 +594,10 @@ export function VideoInfoProvider({ children }: VideoInfoProviderProps) {
     duplicateIndices,
     selectedCount,
     isFetching,
+    isFetchingSong,
     isSilentFetching,
     download,
+    downloadSong,
   }
 
   return (

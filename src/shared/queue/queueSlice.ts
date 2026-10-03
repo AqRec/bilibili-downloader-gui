@@ -303,6 +303,7 @@ export const enqueueSession = createAsyncThunk<
       (i) =>
         i.kind === 'part' &&
         i.videoId === payload.videoId &&
+        (i.contentType ?? 'video') === (payload.contentType ?? 'video') &&
         i.cid === part.cid &&
         ['pending', 'running', 'cancelling'].includes(i.status ?? ''),
     )
@@ -375,6 +376,9 @@ export const queueSlice = createSlice({
       state.push({
         downloadId: parentId,
         kind: 'parent',
+        ...(action.payload.contentType === 'audio' && {
+          contentType: 'audio' as const,
+        }),
         videoId,
         title: videoTitle,
         thumbnailUrl: parts[0]?.thumbnailUrl ?? null,
@@ -385,6 +389,9 @@ export const queueSlice = createSlice({
         state.push({
           downloadId: `${parentId}-p${part.partIndex}`,
           kind: 'part',
+          ...(action.payload.contentType === 'audio' && {
+            contentType: 'audio' as const,
+          }),
           parentId,
           videoId,
           cid: part.cid,

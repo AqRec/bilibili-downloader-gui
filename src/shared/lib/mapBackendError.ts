@@ -31,6 +31,17 @@ const VIDEO_ERROR_MAP: Record<string, string> = {
   // Audio / media download error codes
   'ERR::INVALID_MEDIA_RESPONSE': 'video.invalid_media_response',
   'ERR::AUDIO_DOWNLOAD_FAILED': 'video.audio_download_failed',
+  'ERR::SONG_INVALID_ID': 'song.error.invalidId',
+  'ERR::SONG_NOT_FOUND': 'song.error.notFound',
+  'ERR::SONG_UNAVAILABLE': 'song.error.unavailable',
+  'ERR::SONG_PREVIEW_ONLY': 'song.error.previewOnly',
+  'ERR::SONG_API_ERROR': 'song.error.apiError',
+  'ERR::SONG_NO_STREAM': 'song.error.noStream',
+  'ERR::SONG_INVALID_STREAM': 'song.error.invalidStream',
+  'ERR::SONG_FORMAT_UNSUPPORTED': 'song.error.formatUnsupported',
+  'ERR::SONG_QUALITY_UNSUPPORTED': 'song.error.qualityUnsupported',
+  'ERR::SONG_INVALID_FILENAME': 'song.error.invalidFilename',
+  'ERR::SONG_FORMAT_CHANGED': 'song.error.formatChanged',
   // Download history: process died before the result settled (issue #511)
   'ERR::INTERRUPTED': 'video.download_interrupted',
   // QR login error codes

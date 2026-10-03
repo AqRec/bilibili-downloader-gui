@@ -97,6 +97,7 @@ and remains available after an application update.
   bar
 - **Subtitle embedding** - Soft/hard subtitle selection with multi-language and AI subtitle support
 - **Hi-Res Audio** - Dolby Atmos and Hi-Res Lossless audio quality support
+- **Standalone audio** - Download `/audio/au...` songs at the highest quality available to your account, saving the original M4A/FLAC stream without video or transcoding (full-song access may require permission)
 
 ### Local MP4 Tools
 

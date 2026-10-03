@@ -608,7 +608,7 @@
         "live": "Las transmisiones en vivo no son compatibles.",
         "bangumi_list": "Esta es una página de lista de bangumi. Por favor, usa una URL de episodio (/bangumi/play/ep{id}).",
         "cheese": "Los cursos de pago no son compatibles.",
-        "audio": "El contenido de audio/música no es compatible. Por favor, usa una URL de video.",
+        "audio": "Solo se admiten canciones individuales /audio/au...; otras páginas de audio no son compatibles.",
         "article": "Los artículos no son compatibles. Por favor, usa una URL de video."
       },
       "title": {
@@ -779,6 +779,38 @@
     "qrCodeDescription": "Inicia sesión escaneando un código QR con la app móvil de bilibili",
     "manualCookieDescription": "Pega una cookie copiada de las DevTools de tu navegador para iniciar sesión",
     "loginButton": "Iniciar sesión"
+  },
+  "song": {
+    "stepTitle": "Audio independiente",
+    "supportedLinkHint": "Admite vídeos, series y enlaces de canciones /audio/au...",
+    "qualityAvailable": "Máxima calidad disponible para tu cuenta: {{quality}}",
+    "outputFormat": "Formato original: {{format}}",
+    "losslessUnavailable": "Hay audio sin pérdida, pero tu cuenta no tiene acceso.",
+    "download": "Descargar audio original",
+    "alreadyQueued": "Esta canción ya está en la cola de descargas.",
+    "fetchFailed": "No se pudo obtener la información de la canción",
+    "downloadFailed": "Error al descargar el audio",
+    "downloadFailedDescription": "{{title}}: {{description}}",
+    "quality": {
+      "q128": "128 kbps",
+      "q192": "192 kbps",
+      "q320": "320 kbps",
+      "lossless": "FLAC sin pérdida",
+      "unknown": "Calidad desconocida"
+    },
+    "error": {
+      "invalidId": "ID de audio no válido.",
+      "notFound": "No se encontró la canción o se eliminó.",
+      "unavailable": "Esta canción no está disponible para reproducir.",
+      "previewOnly": "Solo hay una vista previa. Comprueba que tu cuenta tenga acceso a la canción completa.",
+      "apiError": "No se pudo obtener la canción. Inténtalo de nuevo.",
+      "noStream": "No se recibió ningún flujo de audio reproducible.",
+      "invalidStream": "La dirección del audio no es válida o es insegura.",
+      "formatUnsupported": "Este formato de audio original no es compatible.",
+      "qualityUnsupported": "El servicio devolvió una calidad desconocida.",
+      "invalidFilename": "El nombre del archivo de audio no es válido.",
+      "formatChanged": "El formato de audio cambió durante el reintento. Inicia otra descarga."
+    }
   },
   "downloadStatus": {
     "elapsed": "Transcurrido",

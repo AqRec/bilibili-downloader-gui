@@ -107,6 +107,17 @@ impl HistorySession {
     /// session (all no-ops) — a broken history store must not fail the
     /// download itself.
     pub fn start(app: &AppHandle, options: &crate::handlers::bilibili::DownloadOptions) -> Self {
+        Self::start_entry(app, initial_entry(options))
+    }
+
+    pub fn start_song(
+        app: &AppHandle,
+        options: &crate::handlers::bilibili::SongDownloadOptions,
+    ) -> Self {
+        Self::start_entry(app, initial_song_entry(options))
+    }
+
+    fn start_entry(app: &AppHandle, entry: HistoryEntry) -> Self {
         let store = match HistoryStore::new(app) {
             Ok(store) => store,
             Err(e) => {
@@ -121,13 +132,11 @@ impl HistorySession {
                 return Self::disabled();
             }
         };
-        match Self::start_with(store, lock_dir, initial_entry(options)) {
+        let entry_id = entry.id.clone();
+        match Self::start_with(store, lock_dir, entry) {
             Ok(session) => session,
             Err(e) => {
-                log::warn!(
-                    "[BE] history_session: start failed for {}: {e}",
-                    options.download_id
-                );
+                log::warn!("[BE] history_session: start failed for {}: {e}", entry_id);
                 Self::disabled()
             }
         }
@@ -175,10 +184,60 @@ impl HistorySession {
     /// `failed` (+ error code), or removed on cancel. Consumes `self`; the
     /// Drop implementation releases the lock and removes the lock file.
     pub async fn settle(
-        mut self,
+        self,
         app: &AppHandle,
         options: &crate::handlers::bilibili::DownloadOptions,
         result: &Result<String, String>,
+    ) {
+        // Preserve the video path's time-boxed thumbnail fetch; standalone
+        // audio already carries its cover from the metadata response.
+        let thumbnail_url = if result.is_ok() {
+            match options.thumbnail_url.clone() {
+                Some(url) => Some(url),
+                None => tokio::time::timeout(
+                    std::time::Duration::from_secs(THUMBNAIL_FETCH_TIMEOUT_SECS),
+                    fetch_thumbnail(app, &options.bvid),
+                )
+                .await
+                .ok()
+                .flatten(),
+            }
+        } else {
+            None
+        };
+        self.settle_result(
+            app,
+            result.as_ref().map(String::as_str).map_err(String::as_str),
+            thumbnail_url,
+            None,
+        );
+    }
+
+    pub fn settle_song(
+        self,
+        app: &AppHandle,
+        result: &Result<crate::handlers::bilibili::SongDownloadResult, String>,
+    ) {
+        let quality = result.as_ref().ok().map(|song| {
+            crate::handlers::bilibili::song_quality_to_string(song.audio_quality).to_string()
+        });
+        self.settle_result(
+            app,
+            result
+                .as_ref()
+                .map(|song| song.output_path.as_str())
+                .map_err(String::as_str),
+            None,
+            quality,
+        );
+    }
+
+    fn settle_result(
+        mut self,
+        app: &AppHandle,
+        result: Result<&str, &str>,
+        thumbnail_url: Option<String>,
+        quality: Option<String>,
     ) {
         // Note: both arms re-emit `history:entry_added` — no separate
         // "entry updated" event exists because the frontend never received the
@@ -188,23 +247,7 @@ impl HistorySession {
         // fire at most once per entry id.
         match result {
             Ok(final_path) => {
-                // Mirror the old save_to_history: use the part's thumbnail
-                // when present, fetch the video's otherwise. The fetch is
-                // time-boxed because settle runs inline in download_video —
-                // the invoke must not hang on an unreachable API after the
-                // file is already complete (reqwest has no default total
-                // timeout); a timed-out entry just lands without a thumbnail.
-                let thumbnail_url = match options.thumbnail_url.clone() {
-                    Some(url) => Some(url),
-                    None => tokio::time::timeout(
-                        std::time::Duration::from_secs(THUMBNAIL_FETCH_TIMEOUT_SECS),
-                        fetch_thumbnail(app, &options.bvid),
-                    )
-                    .await
-                    .ok()
-                    .flatten(),
-                };
-                if let Some(entry) = self.complete(final_path, thumbnail_url) {
+                if let Some(entry) = self.complete(final_path, thumbnail_url, quality) {
                     let _ = app.emit("history:entry_added", &entry);
                 }
             }
@@ -230,6 +273,7 @@ impl HistorySession {
         &mut self,
         final_path: &str,
         thumbnail_url: Option<String>,
+        quality: Option<String>,
     ) -> Option<HistoryEntry> {
         let file_size = fs::metadata(final_path).ok().map(|m| m.len());
         self.finalize("complete", |e| {
@@ -238,6 +282,9 @@ impl HistorySession {
             e.file_size = file_size;
             if let Some(url) = &thumbnail_url {
                 e.thumbnail_url = Some(url.clone());
+            }
+            if let Some(quality) = &quality {
+                e.quality = Some(quality.clone());
             }
         })
     }
@@ -335,6 +382,22 @@ fn initial_entry(options: &crate::handlers::bilibili::DownloadOptions) -> Histor
             .quality
             .as_ref()
             .map(crate::handlers::bilibili::quality_to_string),
+        thumbnail_url: options.thumbnail_url.clone(),
+        version: "1.0".to_string(),
+    }
+}
+
+fn initial_song_entry(options: &crate::handlers::bilibili::SongDownloadOptions) -> HistoryEntry {
+    HistoryEntry {
+        id: options.download_id.clone(),
+        title: options.filename.clone(),
+        bvid: None,
+        url: format!("https://www.bilibili.com/audio/au{}", options.song_id),
+        downloaded_at: now_rfc3339(),
+        status: "in_progress".to_string(),
+        error_message: None,
+        file_size: None,
+        quality: None,
         thumbnail_url: options.thumbnail_url.clone(),
         version: "1.0".to_string(),
     }
@@ -623,6 +686,7 @@ mod tests {
             .complete(
                 &output.to_string_lossy(),
                 Some("http://example.test/t.jpg".to_string()),
+                None,
             )
             .unwrap();
         assert_eq!(updated.status, "completed");
@@ -634,6 +698,35 @@ mod tests {
         drop(session);
 
         assert!(!session_lock_path(dir.path(), "dl-1").exists());
+    }
+
+    #[test]
+    fn song_history_uses_audio_url_and_records_actual_quality() {
+        let options = crate::handlers::bilibili::SongDownloadOptions {
+            song_id: 821521,
+            filename: "Song".into(),
+            download_id: "au821521-job-p1".into(),
+            thumbnail_url: Some("https://i0.hdslb.com/song.jpg".into()),
+        };
+        let initial = initial_song_entry(&options);
+        assert_eq!(initial.url, "https://www.bilibili.com/audio/au821521");
+        assert!(initial.bvid.is_none());
+        assert_eq!(initial.status, "in_progress");
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("Song.flac");
+        fs::write(&output, b"lossless").unwrap();
+        let mut session =
+            HistorySession::start_with(store_in(dir.path()), dir.path().to_path_buf(), initial)
+                .unwrap();
+        let entry = session
+            .complete(output.to_str().unwrap(), None, Some("FLAC".into()))
+            .unwrap();
+        assert_eq!(entry.file_size, Some(8));
+        assert_eq!(entry.quality.as_deref(), Some("FLAC"));
+        assert_eq!(
+            entry.thumbnail_url.as_deref(),
+            Some("https://i0.hdslb.com/song.jpg")
+        );
     }
 
     #[test]
@@ -660,7 +753,7 @@ mod tests {
         let mut session = HistorySession::disabled();
         assert!(session.fail("ERR::X").is_none());
         session.cancel();
-        assert!(session.complete("/nonexistent", None).is_none());
+        assert!(session.complete("/nonexistent", None, None).is_none());
     }
 
     // ---- startup recovery ----

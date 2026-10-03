@@ -1,19 +1,32 @@
 import { store } from '@/app/store'
 import { setInitiated } from '@/features/init'
 import { setUser } from '@/features/user/userSlice'
-import { PARTS_PER_PAGE, setVideo } from '@/features/video'
+import { PARTS_PER_PAGE, setVideo, useVideoInfo } from '@/features/video'
 import { initPartInputs, setInput } from '@/features/video/model/inputSlice'
 import type { Video, VideoPart } from '@/features/video/types'
 import SearchContent from '@/pages/search'
-import { renderWithProviders } from '@/test/test-utils'
-import { screen, within } from '@testing-library/react'
+import { mockInvoke, renderWithProviders, resetQueue } from '@/test/test-utils'
+import { screen, waitFor, within } from '@testing-library/react'
 import { Navigate, Route, Routes, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Leaf UI components are covered by their own F4 tests; here they are stubbed
 // so this file locks the page's wiring (store → layout → leaves) only.
 vi.mock('@/features/video/ui/VideoForm1', () => ({
-  default: () => <div data-testid="video-form1" />,
+  default: function MockVideoForm1() {
+    const { onValid1 } = useVideoInfo()
+    return (
+      <div data-testid="video-form1">
+        <button
+          onClick={() =>
+            void onValid1('https://www.bilibili.com/audio/au821521')
+          }
+        >
+          open-au
+        </button>
+      </div>
+    )
+  },
 }))
 vi.mock('@/features/video/ui/DownloadButton', () => ({
   default: () => <div data-testid="download-button" />,
@@ -118,6 +131,7 @@ describe('SearchContent', () => {
     // The store is a singleton shared across tests in this file; reset the
     // slices the page reads so each test seeds only what it asserts on.
     vi.clearAllMocks()
+    resetQueue()
     store.dispatch(setInitiated(true))
     store.dispatch(
       setUser({
@@ -192,6 +206,39 @@ describe('SearchContent', () => {
     expect(screen.queryByText('video.step2_title')).not.toBeInTheDocument()
     expect(screen.queryAllByTestId('video-part-card')).toHaveLength(0)
     expect(screen.queryAllByTestId('download-button')).toHaveLength(0)
+  })
+
+  it('shows an au song card and queues its source audio instead of video', async () => {
+    mockInvoke.mockImplementation((command: string) =>
+      command === 'fetch_song_info'
+        ? Promise.resolve({
+            id: 821521,
+            title: 'Song',
+            author: 'Artist',
+            cover: null,
+            duration: 229,
+            audioQuality: 2,
+            format: 'm4a',
+            losslessAvailable: false,
+          })
+        : Promise.resolve(undefined),
+    )
+    const { user } = renderWithProviders(<SearchContent />, {
+      route: '/search',
+    })
+    await user.click(screen.getByRole('button', { name: 'open-au' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('song-card')).toBeInTheDocument(),
+    )
+    expect(screen.queryByText('video.step2_title')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'song.download' }))
+    expect(
+      store
+        .getState()
+        .queue.find(
+          (item) => item.kind === 'part' && item.videoId === 'au821521',
+        )?.payload?.kind,
+    ).toBe('audio')
   })
 
   it('renders the part list and download affordances from the store', () => {

@@ -13,9 +13,10 @@ import { writeTextFile } from '@tauri-apps/plugin-fs'
 import { FileText, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useLocation } from 'react-router'
+import { useLocation, useNavigate } from 'react-router'
 
 import { logger } from '@/shared/lib/logger'
+import { audioRedownloadRoute } from './lib/audioRedownloadRoute'
 
 /**
  * History page content component.
@@ -26,6 +27,7 @@ import { logger } from '@/shared/lib/logger'
 export function HistoryContent() {
   const { t } = useTranslation()
   const handleDownload = usePendingDownload()
+  const navigate = useNavigate()
 
   const {
     entries,
@@ -78,6 +80,9 @@ export function HistoryContent() {
     if (entry.bvid) {
       const page = extractPageFromUrl(entry.url)
       handleDownload(entry.bvid, null, page)
+    } else {
+      const route = audioRedownloadRoute(entry.url)
+      if (route) navigate(route)
     }
   }
 

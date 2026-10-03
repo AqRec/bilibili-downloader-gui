@@ -313,6 +313,9 @@ function VideoForm1() {
                   {renderInputIcon(field.value, field.onChange)}
                 </div>
               </FormControl>
+              <p className="text-muted-foreground text-xs">
+                {t('song.supportedLinkHint')}
+              </p>
               {expandError ? (
                 <p className="text-destructive text-sm">{expandError}</p>
               ) : (

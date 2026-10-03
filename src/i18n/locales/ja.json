@@ -608,7 +608,7 @@
         "live": "ライブ配信は非対応です。",
         "bangumi_list": "これはバンガミ一覧ページです。エピソードURL (/bangumi/play/ep{id}) を入力してください。",
         "cheese": "有料コースは非対応です。",
-        "audio": "音声・音楽コンテンツは非対応です。動画URLを入力してください。",
+        "audio": "単曲の /audio/au... リンクのみ対応しています。ほかの音声ページは非対応です。",
         "article": "記事は非対応です。動画URLを入力してください。"
       },
       "title": {
@@ -779,6 +779,38 @@
     "qrCodeDescription": "スマホのbilibiliアプリでQRコードをスキャンしてログインします",
     "manualCookieDescription": "ブラウザの開発者ツールからコピーしたCookieを貼り付けてログインします",
     "loginButton": "ログイン"
+  },
+  "song": {
+    "stepTitle": "単曲音声",
+    "supportedLinkHint": "動画、番組、/audio/au... の単曲リンクに対応しています。",
+    "qualityAvailable": "現在のアカウントで利用できる最高音質：{{quality}}",
+    "outputFormat": "元のファイル形式：{{format}}",
+    "losslessUnavailable": "ロスレス音源がありますが、このアカウントでは利用できません。",
+    "download": "元の音声をダウンロード",
+    "alreadyQueued": "この曲はすでにダウンロード待ちです。",
+    "fetchFailed": "曲情報を取得できませんでした",
+    "downloadFailed": "音声のダウンロードに失敗しました",
+    "downloadFailedDescription": "{{title}}：{{description}}",
+    "quality": {
+      "q128": "128 kbps",
+      "q192": "192 kbps",
+      "q320": "320 kbps",
+      "lossless": "ロスレス FLAC",
+      "unknown": "不明な音質"
+    },
+    "error": {
+      "invalidId": "音声 ID が無効です。",
+      "notFound": "曲が見つからないか、削除されました。",
+      "unavailable": "この曲は現在再生できません。",
+      "previewOnly": "試聴版しか取得できません。曲全体へのアクセス権を確認してください。",
+      "apiError": "曲を取得できませんでした。もう一度お試しください。",
+      "noStream": "再生可能な音声ストリームがありません。",
+      "invalidStream": "音声ストリームの URL が無効または安全ではありません。",
+      "formatUnsupported": "この音声形式には対応していません。",
+      "qualityUnsupported": "不明な音質が返されました。",
+      "invalidFilename": "音声ファイル名が無効です。",
+      "formatChanged": "再試行中に音声形式が変わりました。最初からダウンロードしてください。"
+    }
   },
   "downloadStatus": {
     "elapsed": "経過",

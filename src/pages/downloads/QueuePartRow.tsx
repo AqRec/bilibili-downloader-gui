@@ -1,5 +1,6 @@
 import { useAppDispatch } from '@/app/store'
 import { IconButton } from '@/components/animate-ui/components/buttons/icon'
+import { songQualityLabel } from '@/features/song'
 import {
   AUDIO_QUALITIES_MAP,
   VIDEO_QUALITIES_MAP,
@@ -117,7 +118,7 @@ export function QueuePartRow({ row }: Props) {
   // Finished rows show the file name the backend actually wrote —
   // duplicate avoidance may append " (1)" and the title was sanitized,
   // so only this value matches what the user sees in Explorer. The final
-  // ".mp4" extension is stripped for readability (every row is an mp4).
+  // The extension is stripped for readability (MP4, M4A, FLAC, etc.).
   // Falls back to the enqueue-time title until the invoke resolves
   // outputPath.
   // Note: split on both separators — Windows "\" and macOS "/" paths both
@@ -174,6 +175,24 @@ export function QueuePartRow({ row }: Props) {
   // Actually-used quality (resolved by the backend; may differ from the
   // request via fallback): a muted pill left of the status badge.
   const qualityBadge = (() => {
+    if (item.contentType === 'audio') {
+      const payload = item.payload?.kind === 'audio' ? item.payload : null
+      const quality = item.resolvedAudioQuality ?? payload?.expectedQuality
+      if (quality == null) return null
+      const actualFormat = item.outputPath
+        ?.split(/[\\/]/)
+        .pop()
+        ?.split('.')
+        .pop()
+        ?.toUpperCase()
+      const format = actualFormat ?? payload?.format.toUpperCase()
+      return (
+        <span className="bg-muted text-muted-foreground inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-xs font-medium tabular-nums">
+          {songQualityLabel(quality, t)}
+          {format && ` / ${format}`}
+        </span>
+      )
+    }
     const vq = item.resolvedVideoQuality
     if (vq == null) return null
     const parts = [
@@ -272,6 +291,7 @@ export function QueuePartRow({ row }: Props) {
       {(status === 'running' || status === 'error') && (
         <PartDownloadProgress
           status={partStatus}
+          audioOnly={item.contentType === 'audio'}
           hasEmbeddedAudio={
             item.expectedStages ? !item.expectedStages.audioStage : false
           }

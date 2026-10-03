@@ -2,6 +2,7 @@ import type { RootState } from '@/app/store'
 import { useAppDispatch, useSelector } from '@/app/store'
 import { useInit } from '@/features/init'
 import { QRCodeLoginDialog } from '@/features/login'
+import { SongCard } from '@/features/song'
 import type { Video } from '@/features/video'
 import {
   deselectPageAll,
@@ -319,16 +320,30 @@ function SearchContentInner() {
   const [searchParams, setSearchParams] = useSearchParams()
   const {
     video,
+    song,
     duplicateIndices,
     onValid1,
     isFetching,
+    isFetchingSong,
     isSilentFetching,
     input,
+    downloadSong,
   } = useVideoInfo()
   const { t } = useTranslation()
   const dispatch = useAppDispatch()
   const user = useSelector((state: RootState) => state.user)
   const isLoggedIn = user.hasCookie && user.data?.isLogin
+  const isSongQueued = useSelector(
+    (state: RootState) =>
+      song !== null &&
+      state.queue.some(
+        (item) =>
+          item.kind === 'part' &&
+          item.contentType === 'audio' &&
+          item.videoId === `au${song?.id}` &&
+          ['pending', 'running', 'cancelling'].includes(item.status ?? ''),
+      ),
+  )
   const [isQrLoginDialogOpen, setIsQrLoginDialogOpen] = useState(false)
 
   // Fetch in flight that the UI should reflect (explicit submit). The
@@ -530,12 +545,12 @@ function SearchContentInner() {
   // Handle autoFetch from query parameter
   useEffect(() => {
     const autoFetchUrl = searchParams.get('autoFetch')
-    if (autoFetchUrl && !isFetching && video.parts.length === 0) {
+    if (autoFetchUrl && !isFetching) {
       searchParams.delete('autoFetch')
       setSearchParams(searchParams, { replace: true })
       onValid1(autoFetchUrl)
     }
-  }, [searchParams, isFetching, video.parts.length, onValid1, setSearchParams])
+  }, [searchParams, isFetching, onValid1, setSearchParams])
 
   // Sync page when video parts change
   useEffect(() => {
@@ -638,6 +653,30 @@ function SearchContentInner() {
         </Card>
       </div>
 
+      {song && !isExplicitFetching && (
+        <div className="mx-auto w-full max-w-5xl px-3 pb-3 sm:px-6">
+          <SongCard
+            song={song}
+            onDownload={downloadSong}
+            isQueued={isSongQueued}
+          />
+        </div>
+      )}
+      {isFetchingSong && !isSilentFetching && (
+        <div className="mx-auto w-full max-w-5xl px-3 pb-3 sm:px-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="font-display text-lg">
+                {t('song.stepTitle')}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Skeleton className="h-24 w-full" />
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {/* Step 2: Paginated Area */}
       {/* Hidden while a silent auto-fetch is in flight: the debounced
           fetch on input pause must stay invisible, so Step 2 only
@@ -646,47 +685,49 @@ function SearchContentInner() {
           gate applies to the skeletons below: with a previous video
           still displayed, a silent refetch keeps the old list mounted
           instead of flashing skeletons mid-typing. */}
-      {(video.parts.length > 0 || isExplicitFetching) && (
-        <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col px-3 pb-3 sm:px-6">
-          <Card className="flex min-h-0 flex-1 flex-col">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="font-display text-lg">
-                  {t('video.step2_title')}
-                </CardTitle>
-                {isExplicitFetching ? (
-                  <div className="flex items-center gap-2">
-                    <Skeleton className="h-10 w-[88px]" />
-                    <Skeleton className="h-8 w-[68px]" />
-                    <Skeleton className="h-8 w-[68px]" />
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <DownloadButton />
-                    <TooltipButton
-                      label={t('video.select_all_page')}
-                      onClick={handleSelectAllCurrentPage}
-                    />
-                    <TooltipButton
-                      label={t('video.deselect_all_page')}
-                      onClick={handleDeselectAllCurrentPage}
-                    />
-                  </div>
-                )}
-              </div>
-            </CardHeader>
-            <PaginatedPartList
-              video={video}
-              duplicateIndices={duplicateIndices}
-              isFetching={isExplicitFetching}
-              currentPage={currentPage}
-              onPageChange={handlePageChange}
-              scrollToPartIndex={scrollToPartIndex}
-              scrollRequestId={scrollRequestId}
-            />
-          </Card>
-        </div>
-      )}
+      {!song &&
+        !isFetchingSong &&
+        (video.parts.length > 0 || isExplicitFetching) && (
+          <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col px-3 pb-3 sm:px-6">
+            <Card className="flex min-h-0 flex-1 flex-col">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="font-display text-lg">
+                    {t('video.step2_title')}
+                  </CardTitle>
+                  {isExplicitFetching ? (
+                    <div className="flex items-center gap-2">
+                      <Skeleton className="h-10 w-[88px]" />
+                      <Skeleton className="h-8 w-[68px]" />
+                      <Skeleton className="h-8 w-[68px]" />
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <DownloadButton />
+                      <TooltipButton
+                        label={t('video.select_all_page')}
+                        onClick={handleSelectAllCurrentPage}
+                      />
+                      <TooltipButton
+                        label={t('video.deselect_all_page')}
+                        onClick={handleDeselectAllCurrentPage}
+                      />
+                    </div>
+                  )}
+                </div>
+              </CardHeader>
+              <PaginatedPartList
+                video={video}
+                duplicateIndices={duplicateIndices}
+                isFetching={isExplicitFetching}
+                currentPage={currentPage}
+                onPageChange={handlePageChange}
+                scrollToPartIndex={scrollToPartIndex}
+                scrollRequestId={scrollRequestId}
+              />
+            </Card>
+          </div>
+        )}
     </div>
   )
 }

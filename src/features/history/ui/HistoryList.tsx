@@ -40,7 +40,7 @@ const EmptyStateIcon = () => (
 
 /**
  * History list component with loading, empty state, and virtual scrolling.
- * Shows download button for entries with bvid.
+ * Shows download buttons for video IDs and standalone au song links.
  */
 function HistoryList({
   entries,

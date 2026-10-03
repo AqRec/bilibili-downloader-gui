@@ -1,3 +1,4 @@
+import { parseStandaloneAudioId } from '@/shared/lib/parseStandaloneAudioId'
 import { getOs } from '@/shared/os/api/getOs'
 import type { TFunction } from 'i18next'
 import z from 'zod'
@@ -33,11 +34,15 @@ const getUnsupportedUrlError = (
   hostname: string,
   pathname: string,
   t: TFunction,
+  isSongPath: boolean,
 ): string | null => {
   for (const [pattern, key] of UNSUPPORTED_HOSTNAME_RULES) {
     if (pattern.test(hostname)) return t(key)
   }
   for (const [pattern, key] of UNSUPPORTED_PATHNAME_RULES) {
+    if (key === 'validation.video.url.audio' && isSongPath) {
+      continue
+    }
     if (pattern.test(pathname)) return t(key)
   }
   return null
@@ -82,7 +87,7 @@ initInvalidPattern().catch(() => {})
 /**
  * Builds a localized validation schema for video URL input (Step 1).
  *
- * Validates that the URL is a valid Bilibili video or bangumi link from www.bilibili.com.
+ * Validates Bilibili video, bangumi, or standalone au audio links.
  *
  * @param t - The i18next translation function for error messages
  * @returns A Zod schema for video URL validation
@@ -104,9 +109,15 @@ export const buildVideoFormSchema1 = (t: TFunction) =>
       .superRefine((value, ctx) => {
         try {
           const { hostname, pathname } = new URL(value)
+          const isSongPath = parseStandaloneAudioId(value) !== null
 
           // Check for known unsupported patterns first (better UX)
-          const unsupportedError = getUnsupportedUrlError(hostname, pathname, t)
+          const unsupportedError = getUnsupportedUrlError(
+            hostname,
+            pathname,
+            t,
+            isSongPath,
+          )
           if (unsupportedError) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
@@ -130,10 +141,10 @@ export const buildVideoFormSchema1 = (t: TFunction) =>
             })
             return
           }
-          // Check path format for video URL or bangumi URL
+          // Check path format for video, bangumi, or standalone audio URL.
           const isVideoPath = /^\/video\/[a-zA-Z0-9]+/.test(pathname)
           const isBangumiPath = /^\/bangumi\/play\/ep\d+/.test(pathname)
-          if (!isVideoPath && !isBangumiPath) {
+          if (!isVideoPath && !isBangumiPath && !isSongPath) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               message: t('validation.video.url.format'),

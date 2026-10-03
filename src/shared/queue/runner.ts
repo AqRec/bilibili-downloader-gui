@@ -100,7 +100,16 @@ export function createQueueRunner(
     )
 
     try {
-      const outputPath = await executor(item.payload!, ids)
+      const result = await executor(item.payload!, ids)
+      const outputPath = typeof result === 'string' ? result : result.outputPath
+      if (typeof result !== 'string') {
+        dispatch(
+          updateQueueItem({
+            downloadId: ids.downloadId,
+            resolvedAudioQuality: result.audioQuality,
+          }),
+        )
+      }
       dispatch(updateQueueItem({ downloadId: ids.downloadId, outputPath }))
       // Mark done on invoke resolve rather than waiting for the 'complete'
       // progress event, which can race the invoke response.
@@ -164,19 +173,28 @@ export function createQueueRunner(
       raw.includes(code),
     )
     const retryHint = isTransientError ? i18n.t('video.retry_hint') : undefined
-    const partDescription = i18n.t('video.download_failed_part_description', {
-      page: item.payload?.page ?? item.partIndex ?? 0,
-      title: item.title,
-      description,
-    })
+    const isSong = item.payload?.kind === 'audio'
+    const partDescription = isSong
+      ? i18n.t('song.downloadFailedDescription', {
+          title: item.title,
+          description,
+        })
+      : i18n.t('video.download_failed_part_description', {
+          page: item.payload?.page ?? item.partIndex ?? 0,
+          title: item.title,
+          description,
+        })
     // The wrapper (`@/shared/ui/toast`) injects the Copy button and disables
     // the close button app-wide, so only the localized text is passed.
-    toast.error(i18n.t('video.download_failed'), {
-      duration: Infinity,
-      description: retryHint
-        ? `${partDescription}\n${retryHint}`
-        : partDescription,
-    })
+    toast.error(
+      i18n.t(isSong ? 'song.downloadFailed' : 'video.download_failed'),
+      {
+        duration: Infinity,
+        description: retryHint
+          ? `${partDescription}\n${retryHint}`
+          : partDescription,
+      },
+    )
     getStore().dispatch(
       setError(retryHint ? `${description}\n${retryHint}` : description),
     )

@@ -4,12 +4,15 @@
  * NOTE: Keep logic lightweight; avoid duplicating complex validation.
  */
 
+import { parseStandaloneAudioId } from '@/shared/lib/parseStandaloneAudioId'
+
 /**
  * Extracted content identifier from a Bilibili URL.
  */
 export type ExtractedId =
   | { type: 'video'; id: string }
   | { type: 'bangumi'; epId: string }
+  | { type: 'audio'; id: string }
   | null
 
 /**
@@ -33,6 +36,9 @@ export const extractContentId = (url: string): ExtractedId => {
   try {
     const urlObj = new URL(url)
     const { pathname } = urlObj
+
+    const songId = parseStandaloneAudioId(urlObj)
+    if (songId !== null) return { type: 'audio', id: String(songId) }
 
     // Bangumi: /bangumi/play/ep{ep_id}
     const bangumiMatch = pathname.match(/\/bangumi\/play\/ep(\d+)/)

@@ -21,6 +21,15 @@ describe('mapBackendError', () => {
     )
   })
 
+  it('localizes standalone song preview and format errors', () => {
+    expect(mapBackendError('ERR::SONG_PREVIEW_ONLY')).toBe(
+      'song.error.previewOnly',
+    )
+    expect(mapBackendError('ERR::SONG_FORMAT_CHANGED')).toBe(
+      'song.error.formatChanged',
+    )
+  })
+
   it('maps ERR::NETWORK:: with a dynamic suffix to the fixed network key', () => {
     expect(mapBackendError('ERR::NETWORK::2 segment(s) failed')).toBe(
       'video.network_error',

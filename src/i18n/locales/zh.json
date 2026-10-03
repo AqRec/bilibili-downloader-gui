@@ -608,7 +608,7 @@
         "live": "不支持直播链接。",
         "bangumi_list": "这是番剧列表页面。请使用剧集链接 (/bangumi/play/ep{id})。",
         "cheese": "不支持付费课程。",
-        "audio": "不支持音频/音乐内容。请使用视频链接。",
+        "audio": "仅支持单曲 /audio/au... 链接，暂不支持其他音频页面。",
         "article": "不支持专栏文章。请使用视频链接。"
       },
       "title": {
@@ -779,6 +779,38 @@
     "qrCodeDescription": "使用哔哩哔哩手机 App 扫描二维码登录",
     "manualCookieDescription": "粘贴从浏览器开发者工具复制的 Cookie 进行登录",
     "loginButton": "登录"
+  },
+  "song": {
+    "stepTitle": "独立音频",
+    "supportedLinkHint": "支持视频、番剧及 /audio/au... 单曲链接。",
+    "qualityAvailable": "当前账号可用最高音质：{{quality}}",
+    "outputFormat": "源文件格式：{{format}}",
+    "losslessUnavailable": "此曲目提供无损音质，但当前账号没有相应权限。",
+    "download": "下载原音频",
+    "alreadyQueued": "这首音频已在下载队列中。",
+    "fetchFailed": "获取歌曲信息失败",
+    "downloadFailed": "音频下载失败",
+    "downloadFailedDescription": "{{title}}：{{description}}",
+    "quality": {
+      "q128": "128 kbps",
+      "q192": "192 kbps",
+      "q320": "320 kbps",
+      "lossless": "FLAC 无损",
+      "unknown": "未知音质"
+    },
+    "error": {
+      "invalidId": "音频编号无效。",
+      "notFound": "找不到这首音频，可能已下架。",
+      "unavailable": "这首音频目前不可播放。",
+      "previewOnly": "当前只能获取试听片段，请确认账号拥有完整曲目的播放权限。",
+      "apiError": "获取歌曲信息失败，请稍后重试。",
+      "noStream": "没有可用的音频流。",
+      "invalidStream": "音频流地址无效或不安全。",
+      "formatUnsupported": "不支持该源音频格式。",
+      "qualityUnsupported": "音频接口返回了未知的音质档位。",
+      "invalidFilename": "音频文件名无效。",
+      "formatChanged": "重试时源音频格式发生变化，请重新下载。"
+    }
   },
   "downloadStatus": {
     "elapsed": "已用时间",

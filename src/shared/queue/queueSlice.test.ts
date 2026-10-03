@@ -132,7 +132,10 @@ describe('enqueueSession', () => {
     // downloadId format is load-bearing (progress internalIds): `{parentId}-p{n}`.
     expect(children[1].downloadId).toBe(`${parentId}-p2`)
     // Payload/expectedStages snapshots carried on the item.
-    expect(children[0].payload?.cid).toBe(101)
+    expect(children[0].payload?.kind).not.toBe('audio')
+    if (children[0].payload?.kind !== 'audio') {
+      expect(children[0].payload?.cid).toBe(101)
+    }
     expect(children[0].expectedStages).toEqual({
       audioStage: true,
       mergeStage: true,
@@ -149,6 +152,67 @@ describe('enqueueSession', () => {
       enqueueSession({ videoId: 'BV1', videoTitle: 't', parts: [] }),
     )
     expect(queue()).toHaveLength(before)
+  })
+
+  it('queues a standalone song and replaces its pending quality snapshot', () => {
+    const audioPart: EnqueuePartSpec = {
+      partIndex: 1,
+      title: 'Song',
+      thumbnailUrl: null,
+      expectedStages: {
+        audioStage: true,
+        videoStage: false,
+        mergeStage: false,
+      },
+      payload: {
+        kind: 'audio',
+        songId: 821521,
+        filename: 'Song',
+        thumbnailUrl: null,
+        durationSeconds: 229,
+        page: null,
+        expectedQuality: 2,
+        format: 'm4a',
+      },
+    }
+    const session = {
+      contentType: 'audio' as const,
+      videoId: 'au821521',
+      videoTitle: 'Song',
+      parts: [audioPart],
+    }
+    store.dispatch(enqueueSession(session))
+    const first = queue().find((item) => item.kind === 'part')!
+    expect(first.contentType).toBe('audio')
+    expect(first.cid).toBeUndefined()
+    expect(first.expectedStages?.videoStage).toBe(false)
+
+    if (audioPart.payload.kind !== 'audio') {
+      throw new Error('expected standalone audio payload')
+    }
+    store.dispatch(
+      enqueueSession({
+        ...session,
+        parts: [
+          {
+            ...audioPart,
+            payload: {
+              ...audioPart.payload,
+              kind: 'audio',
+              expectedQuality: 3,
+              format: 'flac',
+            },
+          },
+        ],
+      }),
+    )
+    const children = queue().filter((item) => item.kind === 'part')
+    expect(children).toHaveLength(1)
+    expect(children[0].downloadId).toBe(first.downloadId)
+    expect(children[0].payload?.kind).toBe('audio')
+    if (children[0].payload?.kind === 'audio') {
+      expect(children[0].payload.expectedQuality).toBe(3)
+    }
   })
 })
 

@@ -95,6 +95,7 @@ pub use utils::wbi;
 /// **User & Video Information:**
 /// - `fetch_user`: Fetches user information from Bilibili
 /// - `fetch_video_info`: Retrieves video metadata
+/// - `fetch_song_info`: Retrieves standalone audio metadata and highest available fidelity
 /// - `fetch_bangumi_info`: Retrieves bangumi episode metadata
 /// - `fetch_subtitles_for_part`: Fetches subtitles for a video part
 /// - `fetch_part_qualities`: Fetches video/audio qualities for a part
@@ -103,6 +104,7 @@ pub use utils::wbi;
 ///
 /// **Downloads:**
 /// - `download_video`: Downloads a video with specified quality
+/// - `download_song`: Saves the highest available standalone audio stream
 /// - `cancel_download`: Cancels a specific download by ID
 /// - `cancel_all_downloads`: Cancels all active downloads
 /// - `cleanup_temp_files`: Cleans up orphaned temporary files
@@ -181,11 +183,13 @@ pub fn run() {
             get_cookie,
             fetch_user,
             fetch_video_info,
+            fetch_song_info,
             fetch_bangumi_info,
             fetch_subtitles_for_part,
             fetch_part_qualities,
             fetch_bangumi_part_qualities,
             download_video,
+            download_song,
             cancel_download,
             cancel_all_downloads,
             get_settings,
@@ -574,6 +578,11 @@ async fn fetch_video_info(app: AppHandle, video_id: String) -> Result<Video, Str
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn fetch_song_info(app: AppHandle, song_id: u64) -> Result<bilibili::SongInfo, String> {
+    bilibili::fetch_song_info(&app, song_id).await
+}
+
 /// Fetches available subtitles for a specific video part.
 ///
 /// This command retrieves subtitle information from Bilibili's Player v2 API
@@ -663,6 +672,14 @@ async fn download_video(
     options: bilibili::DownloadOptions,
 ) -> Result<String, String> {
     bilibili::download_video(&app, &options).await
+}
+
+#[tauri::command]
+async fn download_song(
+    app: AppHandle,
+    options: bilibili::SongDownloadOptions,
+) -> Result<bilibili::SongDownloadResult, String> {
+    bilibili::download_song(&app, &options).await
 }
 
 /// Cancels a specific download by its ID.

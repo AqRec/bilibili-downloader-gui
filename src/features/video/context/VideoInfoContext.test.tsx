@@ -48,6 +48,17 @@ const toastError = toast.error as unknown as Mock
 
 const VIDEO_URL = 'https://www.bilibili.com/video/BV1xx411c7XD'
 const BANGUMI_URL = 'https://www.bilibili.com/bangumi/play/ep3051843'
+const SONG_URL = 'https://www.bilibili.com/audio/au821521'
+const songPayload = {
+  id: 821521,
+  title: 'Song',
+  author: 'Artist',
+  cover: 'https://i0.hdslb.com/song.jpg',
+  duration: 229,
+  audioQuality: 2,
+  format: 'm4a' as const,
+  losslessAvailable: false,
+}
 
 function partOf(overrides: Partial<Video['parts'][number]>) {
   return {
@@ -134,6 +145,7 @@ beforeEach(() => {
   store.dispatch(clearProgress())
   store.dispatch(clearDownloadError())
   mockInvoke.mockImplementation((cmd: string) => {
+    if (cmd === 'fetch_song_info') return Promise.resolve(songPayload)
     if (cmd === 'fetch_video_info') return Promise.resolve(videoPayload)
     if (cmd === 'fetch_bangumi_info') return Promise.resolve(bangumiPayload)
     return Promise.resolve(undefined)
@@ -152,6 +164,38 @@ describe('useVideoInfo guard', () => {
 })
 
 describe('onValid1', () => {
+  it('fetches an au link and queues only the highest available source audio', async () => {
+    renderProvider()
+
+    await act(async () => {
+      await ctx.onValid1(SONG_URL)
+    })
+
+    expect(mockInvoke).toHaveBeenCalledWith('fetch_song_info', {
+      songId: 821521,
+    })
+    expect(ctx.song).toEqual(songPayload)
+    expect(ctx.videoId).toBeNull()
+    expect(ctx.isForm1Valid).toBe(true)
+    expect(store.getState().video.parts).toHaveLength(0)
+    act(() => ctx.downloadSong())
+
+    const item = store
+      .getState()
+      .queue.find((q) => q.kind === 'part' && q.videoId === 'au821521')
+    expect(item?.contentType).toBe('audio')
+    expect(item?.expectedStages).toEqual({
+      audioStage: true,
+      videoStage: false,
+      mergeStage: false,
+    })
+    expect(item?.payload?.kind).toBe('audio')
+    if (item?.payload?.kind === 'audio') {
+      expect(item.payload.expectedQuality).toBe(2)
+      expect(item.payload.format).toBe('m4a')
+    }
+  })
+
   it('fetches a video URL and initializes part inputs with only page 1 selected', async () => {
     renderProvider()
 
@@ -563,6 +607,9 @@ describe('download', () => {
       await ctx.download()
     })
     const part = store.getState().queue.find((item) => item.kind === 'part')
+    if (part?.payload?.kind === 'audio') {
+      throw new Error('expected video part')
+    }
     expect(part?.payload?.saveAudioWithVideo).toBe(true)
 
     act(() => {
@@ -624,7 +671,10 @@ describe('download', () => {
     expect(child.status).toBe('pending')
     // The fresh snapshot (custom title/quality from the form) replaced it.
     expect(child.title).toBe('Custom name')
-    expect(child.payload?.quality).toBe(80)
+    expect(child.payload?.kind).not.toBe('audio')
+    if (child.payload?.kind !== 'audio') {
+      expect(child.payload?.quality).toBe(80)
+    }
   })
 
   it('deselects enqueued parts — a later Download must not re-include them', async () => {

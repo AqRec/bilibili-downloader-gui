@@ -50,6 +50,9 @@ export const videoApi = createApi({
             args: { videoId: contentId.id },
           }
         }
+        if (contentId.type === 'audio') {
+          throw new Error('Standalone audio uses fetch_song_info')
+        }
         return {
           command: 'fetch_bangumi_info',
           args: { epId: parseInt(contentId.epId, 10) },
@@ -91,5 +94,6 @@ export const fetchContentFromUrl = (
   if (contentId.type === 'video') {
     return { type: 'video', id: contentId.id }
   }
+  if (contentId.type === 'audio') return null
   return { type: 'bangumi', epId: parseInt(contentId.epId, 10) }
 }

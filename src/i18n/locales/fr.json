@@ -608,7 +608,7 @@
         "live": "Les diffusions en direct ne sont pas prises en charge.",
         "bangumi_list": "Ceci est une page de liste bangumi. Veuillez utiliser une URL d'épisode (/bangumi/play/ep{id}).",
         "cheese": "Les cours payants ne sont pas pris en charge.",
-        "audio": "Le contenu audio/musique n'est pas pris en charge. Veuillez utiliser une URL de vidéo.",
+        "audio": "Seuls les liens de chansons /audio/au... sont pris en charge ; les autres pages audio ne le sont pas.",
         "article": "Les articles ne sont pas pris en charge. Veuillez utiliser une URL de vidéo."
       },
       "title": {
@@ -779,6 +779,38 @@
     "qrCodeDescription": "Connectez-vous en scannant un code QR avec l'application mobile bilibili",
     "manualCookieDescription": "Collez un cookie copié depuis les DevTools de votre navigateur pour vous connecter",
     "loginButton": "Se connecter"
+  },
+  "song": {
+    "stepTitle": "Audio indépendant",
+    "supportedLinkHint": "Prend en charge les vidéos, les séries et les chansons /audio/au...",
+    "qualityAvailable": "Meilleure qualité disponible pour votre compte : {{quality}}",
+    "outputFormat": "Format source : {{format}}",
+    "losslessUnavailable": "Une version sans perte existe, mais votre compte n'y a pas accès.",
+    "download": "Télécharger l'audio d'origine",
+    "alreadyQueued": "Cette chanson est déjà dans la file d'attente.",
+    "fetchFailed": "Impossible de charger les informations sur la chanson",
+    "downloadFailed": "Échec du téléchargement audio",
+    "downloadFailedDescription": "{{title}} : {{description}}",
+    "quality": {
+      "q128": "128 kbps",
+      "q192": "192 kbps",
+      "q320": "320 kbps",
+      "lossless": "FLAC sans perte",
+      "unknown": "Qualité inconnue"
+    },
+    "error": {
+      "invalidId": "Identifiant audio invalide.",
+      "notFound": "Chanson introuvable ou supprimée.",
+      "unavailable": "Cette chanson n'est pas disponible.",
+      "previewOnly": "Seul un extrait est disponible. Vérifiez l'accès de votre compte à la chanson complète.",
+      "apiError": "Impossible de récupérer la chanson. Réessayez.",
+      "noStream": "Aucun flux audio lisible n'a été renvoyé.",
+      "invalidStream": "L'adresse du flux audio est invalide ou non sécurisée.",
+      "formatUnsupported": "Ce format audio source n'est pas pris en charge.",
+      "qualityUnsupported": "Le service a renvoyé une qualité inconnue.",
+      "invalidFilename": "Nom de fichier audio invalide.",
+      "formatChanged": "Le format audio a changé pendant la nouvelle tentative. Recommencez le téléchargement."
+    }
   },
   "downloadStatus": {
     "elapsed": "Temps écoulé",

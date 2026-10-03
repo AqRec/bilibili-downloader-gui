@@ -80,6 +80,7 @@ Extrayez l'intégralité du ZIP avant d'exécuter le programme. Les deux éditio
 - **File de téléchargements** - Continuez à rechercher et à mettre en file pendant les téléchargements ; une file série (FIFO) est traitée sur la page des téléchargements avec une barre de progression en bas
 - **Incorporation de sous-titres** - Sélection de sous-titres souples/durs avec support multilingue et sous-titres IA
 - **Audio haute résolution** - Prise en charge Dolby Atmos et Hi-Res Lossless
+- **Téléchargement audio autonome** - Enregistrez les chansons `/audio/au...` dans leur flux M4A/FLAC d'origine de la meilleure qualité accessible à votre compte, sans vidéo ni réencodage (l'accès intégral peut nécessiter une autorisation)
 
 ### Outils MP4 locaux
 

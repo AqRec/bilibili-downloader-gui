@@ -608,7 +608,7 @@
         "live": "라이브 스트리밍은 지원되지 않습니다.",
         "bangumi_list": "이것은 방구미 목록 페이지입니다. 에피소드 URL (/bangumi/play/ep{id})을 입력하세요.",
         "cheese": "유료 강좌는 지원되지 않습니다.",
-        "audio": "오디오/음악 콘텐츠는 지원되지 않습니다. 비디오 URL을 입력하세요.",
+        "audio": "단일 /audio/au... 곡 링크만 지원하며 다른 오디오 페이지는 지원하지 않습니다.",
         "article": "칼럼 글은 지원되지 않습니다. 비디오 URL을 입력하세요."
       },
       "title": {
@@ -779,6 +779,38 @@
     "qrCodeDescription": "빌리빌리 모바일 앱으로 QR 코드를 스캔하여 로그인합니다",
     "manualCookieDescription": "브라우저 개발자 도구에서 복사한 쿠키를 붙여넣어 로그인합니다",
     "loginButton": "로그인"
+  },
+  "song": {
+    "stepTitle": "단일 오디오",
+    "supportedLinkHint": "동영상, 시리즈 및 /audio/au... 곡 링크를 지원합니다.",
+    "qualityAvailable": "현재 계정에서 이용 가능한 최고 음질: {{quality}}",
+    "outputFormat": "원본 파일 형식: {{format}}",
+    "losslessUnavailable": "무손실 음원이 있지만 현재 계정에는 이용 권한이 없습니다.",
+    "download": "원본 오디오 다운로드",
+    "alreadyQueued": "이 곡은 이미 다운로드 대기열에 있습니다.",
+    "fetchFailed": "곡 정보를 불러오지 못했습니다",
+    "downloadFailed": "오디오 다운로드 실패",
+    "downloadFailedDescription": "{{title}}: {{description}}",
+    "quality": {
+      "q128": "128 kbps",
+      "q192": "192 kbps",
+      "q320": "320 kbps",
+      "lossless": "무손실 FLAC",
+      "unknown": "알 수 없는 음질"
+    },
+    "error": {
+      "invalidId": "오디오 ID가 올바르지 않습니다.",
+      "notFound": "곡을 찾을 수 없거나 삭제되었습니다.",
+      "unavailable": "현재 재생할 수 없는 곡입니다.",
+      "previewOnly": "미리듣기만 제공됩니다. 전체 곡 이용 권한을 확인하세요.",
+      "apiError": "곡을 불러오지 못했습니다. 다시 시도해 주세요.",
+      "noStream": "재생 가능한 오디오 스트림이 없습니다.",
+      "invalidStream": "오디오 스트림 주소가 올바르지 않거나 안전하지 않습니다.",
+      "formatUnsupported": "지원하지 않는 원본 오디오 형식입니다.",
+      "qualityUnsupported": "알 수 없는 음질 단계가 반환되었습니다.",
+      "invalidFilename": "오디오 파일 이름이 올바르지 않습니다.",
+      "formatChanged": "재시도 중 오디오 형식이 변경되었습니다. 새로 다운로드하세요."
+    }
   },
   "downloadStatus": {
     "elapsed": "경과",

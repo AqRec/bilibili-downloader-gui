@@ -63,6 +63,17 @@ describe('pickStageData weighted percentage', () => {
     })
     expect(rep.percentage).toBe(100)
   })
+
+  it('uses only the audio stage for source-quality standalone songs', () => {
+    const rep = pickStageData([entry('audio', 65)], {
+      audioStage: true,
+      videoStage: false,
+      mergeStage: false,
+    })
+    expect(rep.percentage).toBe(65)
+    expect(rep.audio?.percentage).toBe(65)
+    expect(rep.video).toBeNull()
+  })
 })
 
 describe('pickStageData merge-fallback wiring', () => {

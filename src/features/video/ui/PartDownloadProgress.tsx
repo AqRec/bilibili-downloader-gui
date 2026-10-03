@@ -307,6 +307,8 @@ type Props = {
   onCancel?: () => void
   /** True if audio is embedded (durl format), so only video stage is shown */
   hasEmbeddedAudio?: boolean
+  /** Standalone source audio: show only the audio transfer stage. */
+  audioOnly?: boolean
   /**
    * Render without the block's own surface (bg/rounded/padding/margin).
    * Used inside PartCompactCard, where the surrounding active-part
@@ -334,6 +336,7 @@ export function PartDownloadProgress({
   isWaitingForTurn = false,
   onCancel,
   hasEmbeddedAudio = false,
+  audioOnly = false,
   flat = false,
   suppressStatusLabels = false,
 }: Props) {
@@ -502,11 +505,7 @@ export function PartDownloadProgress({
         >
           {/* Audio/merge stages: visible when !hasEmbeddedAudio, fade out on
               transition. isAudioHidden removes from layout after animation. */}
-          <div
-            className={`flex flex-1 gap-x-3 transition-opacity duration-300 ${
-              isAudioHidden ? 'hidden' : ''
-            } ${isFadingOut ? 'opacity-0' : 'opacity-100'}`}
-          >
+          {audioOnly ? (
             <div className="flex-1">
               <StageProgress
                 icon="🔊"
@@ -517,26 +516,43 @@ export function PartDownloadProgress({
                 startingIndicator={startingIndicator}
               />
             </div>
-            <div className="flex-1">
-              <StageProgress
-                icon="🎬"
-                labelKey="video.stage_video"
-                progressEntries={progressEntries}
-                stageName="video"
-                t={t}
-                startingIndicator={startingIndicator}
-              />
+          ) : (
+            <div
+              className={`flex flex-1 gap-x-3 transition-opacity duration-300 ${
+                isAudioHidden ? 'hidden' : ''
+              } ${isFadingOut ? 'opacity-0' : 'opacity-100'}`}
+            >
+              <div className="flex-1">
+                <StageProgress
+                  icon="🔊"
+                  labelKey="video.stage_audio"
+                  progressEntries={progressEntries}
+                  stageName="audio"
+                  t={t}
+                  startingIndicator={startingIndicator}
+                />
+              </div>
+              <div className="flex-1">
+                <StageProgress
+                  icon="🎬"
+                  labelKey="video.stage_video"
+                  progressEntries={progressEntries}
+                  stageName="video"
+                  t={t}
+                  startingIndicator={startingIndicator}
+                />
+              </div>
+              <div className="flex-1">
+                {hasSubtitleStage ? (
+                  <SubtitleStageProgress t={t} />
+                ) : (
+                  <MergeStageProgress progressEntries={progressEntries} t={t} />
+                )}
+              </div>
             </div>
-            <div className="flex-1">
-              {hasSubtitleStage ? (
-                <SubtitleStageProgress t={t} />
-              ) : (
-                <MergeStageProgress progressEntries={progressEntries} t={t} />
-              )}
-            </div>
-          </div>
+          )}
           {/* Video-only stage: visible when hasEmbeddedAudio and not fading */}
-          {hasEmbeddedAudio && !isFadingOut && (
+          {hasEmbeddedAudio && !audioOnly && !isFadingOut && (
             <>
               <div className="flex-1">
                 <StageProgress

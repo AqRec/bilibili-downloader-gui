@@ -1,13 +1,13 @@
 import { logger } from '@/shared/lib/logger'
 import { invoke } from '@tauri-apps/api/core'
 
-import type { DownloadPartPayload } from '../types'
+import type { DownloadPartPayload, SongDownloadResult } from '../types'
 
 /** Default part executor: invokes the backend `download_video` command. */
 export type PartExecutor = (
   payload: DownloadPartPayload,
   ids: { downloadId: string; parentId: string },
-) => Promise<string>
+) => Promise<string | SongDownloadResult>
 
 /**
  * Executes one queued part via the Tauri backend.
@@ -20,6 +20,19 @@ export type PartExecutor = (
  *   (classified by the runner).
  */
 export const executeDownloadPart: PartExecutor = async (payload, ids) => {
+  if (payload.kind === 'audio') {
+    logger.info(
+      `executeDownloadPart: starting audio id=${ids.downloadId}, songId=${payload.songId}`,
+    )
+    return invoke<SongDownloadResult>('download_song', {
+      options: {
+        songId: payload.songId,
+        filename: payload.filename,
+        downloadId: ids.downloadId,
+        thumbnailUrl: payload.thumbnailUrl,
+      },
+    })
+  }
   logger.info(
     `executeDownloadPart: starting id=${ids.downloadId}, videoId=${payload.videoId}, cid=${payload.cid}`,
   )

@@ -77,7 +77,8 @@ export type DownloadSubtitleOptions = {
  * `state.input.partInputs` (title, quality, …) must NOT affect an already
  * enqueued part — that is the core decoupling the queueing feature adds.
  */
-export type DownloadPartPayload = {
+export type VideoDownloadPartPayload = {
+  kind?: 'video'
   /** 'BV...' or 'av...' */
   videoId: string
   cid: number
@@ -101,6 +102,27 @@ export type DownloadPartPayload = {
   subtitle: DownloadSubtitleOptions | null
 }
 
+/** A standalone source audio stream, saved without fetching video or transcoding. */
+export type SongDownloadPartPayload = {
+  kind: 'audio'
+  songId: number
+  filename: string
+  durationSeconds: number
+  thumbnailUrl: string | null
+  page: null
+  expectedQuality: number
+  format: 'm4a' | 'flac' | 'mp3' | 'aac'
+}
+
+export type SongDownloadResult = {
+  outputPath: string
+  audioQuality: number
+}
+
+export type DownloadPartPayload =
+  | VideoDownloadPartPayload
+  | SongDownloadPartPayload
+
 /**
  * Which download stages a part actually runs (issue #446). Computed from
  * the lazy-loaded quality shape at ENQUEUE time and snapshotted onto the
@@ -110,6 +132,8 @@ export type DownloadPartPayload = {
 export type ExpectedStages = {
   /** Audio stream download runs (false: silent source or durl muxed file) */
   audioStage: boolean
+  /** False for a standalone audio download; video downloads default to true. */
+  videoStage?: boolean
   /** ffmpeg merge/remux runs (false: durl saves bytes directly) */
   mergeStage: boolean
 }
@@ -128,9 +152,11 @@ export type QueueItem = {
   downloadId: string
   /** Parent = one enqueue of a video (one card on /downloads); part = one mp4. */
   kind: 'parent' | 'part'
+  /** Only standalone au songs set this; existing video sessions omit it. */
+  contentType?: 'audio'
   /** Set on part items; links them to their parent session. */
   parentId?: string
-  /** Badge/dedup match key 1 (both kinds). */
+  /** Badge/dedup match key (`BV...`, `av...`, or `au...`). */
   videoId: string
   /** Badge/dedup match key 2 (part items only). */
   cid?: number
@@ -165,7 +191,8 @@ export type QueueItem = {
 export type EnqueuePartSpec = {
   /** 1-based part number. */
   partIndex: number
-  cid: number
+  /** Video CID; standalone audio has no video part. */
+  cid?: number
   /** Trimmed filename/title for this part. */
   title: string
   thumbnailUrl: string | null
@@ -176,6 +203,7 @@ export type EnqueuePartSpec = {
 
 /** Payload of `enqueueSession`: one video plus every selected part. */
 export type EnqueueSessionPayload = {
+  contentType?: 'audio'
   videoId: string
   videoTitle: string
   parts: EnqueuePartSpec[]

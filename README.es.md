@@ -80,6 +80,7 @@ Extrae el ZIP completo antes de ejecutar el programa. Ambas ediciones requieren 
 - **Cola de descargas** - Sigue buscando y añadiendo descargas mientras se ejecutan; una cola serial (FIFO) se procesa en la página de descargas con una barra de progreso inferior
 - **Incrustación de subtítulos** - Selección de subtítulos blandos/duros con soporte multiidioma y subtítulos con IA
 - **Audio de alta resolución** - Compatible con Dolby Atmos y Hi-Res Lossless
+- **Descarga de audio independiente** - Guarda canciones `/audio/au...` en el M4A/FLAC original de mayor calidad disponible para tu cuenta, sin vídeo ni recodificación (el acceso a la canción completa puede requerir autorización)
 
 ### Herramientas locales de MP4
 

@@ -97,4 +97,37 @@ describe('executeDownloadPart', () => {
       }),
     )
   })
+
+  it('invokes download_song and returns the actual source quality', async () => {
+    mockInvoke.mockResolvedValueOnce({
+      outputPath: 'C:\\Music\\Song.flac',
+      audioQuality: 3,
+    })
+    const output = await executeDownloadPart(
+      {
+        kind: 'audio',
+        songId: 821521,
+        filename: 'Song',
+        durationSeconds: 229,
+        thumbnailUrl: 'https://i0.hdslb.com/song.jpg',
+        page: null,
+        expectedQuality: 2,
+        format: 'm4a',
+      },
+      { downloadId: 'au821521-uuid-p1', parentId: 'au821521-uuid' },
+    )
+
+    expect(mockInvoke).toHaveBeenCalledWith('download_song', {
+      options: {
+        songId: 821521,
+        filename: 'Song',
+        downloadId: 'au821521-uuid-p1',
+        thumbnailUrl: 'https://i0.hdslb.com/song.jpg',
+      },
+    })
+    expect(output).toEqual({
+      outputPath: 'C:\\Music\\Song.flac',
+      audioQuality: 3,
+    })
+  })
 })

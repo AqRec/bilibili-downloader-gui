@@ -78,6 +78,12 @@ describe('fetchContentFromUrl', () => {
     )
   })
 
+  it('does not route standalone au links to the video-only content endpoint', () => {
+    expect(
+      fetchContentFromUrl('https://www.bilibili.com/audio/au821521'),
+    ).toBeNull()
+  })
+
   it('returns null for an invalid URL string', () => {
     expect(fetchContentFromUrl('not-a-url')).toBe(null)
   })

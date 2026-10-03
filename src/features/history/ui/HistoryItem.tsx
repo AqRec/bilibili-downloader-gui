@@ -8,6 +8,7 @@ import {
   TooltipTrigger,
 } from '@/shared/animate-ui/radix/tooltip'
 import { mapBackendError } from '@/shared/lib/mapBackendError'
+import { parseStandaloneAudioId } from '@/shared/lib/parseStandaloneAudioId'
 import { cn } from '@/shared/lib/utils'
 import { Button } from '@/shared/ui/button'
 import { toast } from '@/shared/ui/toast'
@@ -124,8 +125,8 @@ type Props = {
 /**
  * Displays a single download history entry with thumbnail, metadata, and actions.
  *
- * Shows video information including title, URL, download date, file size,
- * quality, and status. Supports re-downloading videos and deleting entries.
+ * Shows media title, URL, download date, file size, quality, and status.
+ * Supports re-downloading videos or standalone songs and deleting entries.
  *
  * @example
  * ```tsx
@@ -270,31 +271,32 @@ function HistoryItem({ entry, onDelete, onDownload, disabled }: Props) {
         )}
       </div>
 
-      {/* Download button - only show if bvid exists */}
-      {entry.bvid && onDownload && (
-        <TooltipProvider delayDuration={0}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span>
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={onDownload}
-                  disabled={disabled}
-                >
-                  <Download size={16} />
-                  {t('watchHistory.download')}
-                </Button>
-              </span>
-            </TooltipTrigger>
-            {disabled && (
-              <TooltipContent side="top" arrow>
-                {t('video.download_in_progress')}
-              </TooltipContent>
-            )}
-          </Tooltip>
-        </TooltipProvider>
-      )}
+      {/* Standalone au entries also have a valid source for re-download. */}
+      {(entry.bvid || parseStandaloneAudioId(entry.url) !== null) &&
+        onDownload && (
+          <TooltipProvider delayDuration={0}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={onDownload}
+                    disabled={disabled}
+                  >
+                    <Download size={16} />
+                    {t('watchHistory.download')}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {disabled && (
+                <TooltipContent side="top" arrow>
+                  {t('video.download_in_progress')}
+                </TooltipContent>
+              )}
+            </Tooltip>
+          </TooltipProvider>
+        )}
     </div>
   )
 }

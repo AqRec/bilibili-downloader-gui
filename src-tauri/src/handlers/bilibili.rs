@@ -161,6 +161,48 @@ pub struct DownloadOptions {
     pub ep_id: Option<i64>,
 }
 
+/// Highest-quality standalone Bilibili audio available to the current account.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SongInfo {
+    pub id: u64,
+    pub title: String,
+    pub author: String,
+    pub cover: Option<String>,
+    pub duration: u64,
+    pub audio_quality: i32,
+    pub format: &'static str,
+    pub lossless_available: bool,
+}
+
+/// A standalone `audio/au...` download, independent of video/DASH streams.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SongDownloadOptions {
+    pub song_id: u64,
+    pub filename: String,
+    pub download_id: String,
+    #[serde(default)]
+    pub thumbnail_url: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SongDownloadResult {
+    pub output_path: String,
+    pub audio_quality: i32,
+}
+
+pub(crate) fn song_quality_to_string(quality: i32) -> &'static str {
+    match quality {
+        3 => "FLAC",
+        2 => "320K",
+        1 => "192K",
+        0 => "128K",
+        _ => "Unknown",
+    }
+}
+
 use crate::constants::{API_BASE, PLAYURL_FNVAL, PLAYURL_QN, REFERER};
 use crate::handlers::cookie::{is_bilibili_cookie_domain, read_cookie};
 use crate::handlers::history_session::HistorySession;
@@ -187,6 +229,52 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
+
+const SONG_WEB_BASE: &str = "https://www.bilibili.com";
+const SONG_QUALITY_LOSSLESS: i32 = 3;
+const SONG_API_TIMEOUT: Duration = Duration::from_secs(20);
+
+#[derive(Deserialize)]
+struct SongApiResponse<T> {
+    code: i64,
+    data: Option<T>,
+}
+
+#[derive(Deserialize)]
+struct SongMetadata {
+    id: u64,
+    title: String,
+    #[serde(default)]
+    author: String,
+    cover: Option<String>,
+    duration: u64,
+}
+
+#[derive(Deserialize)]
+struct SongStreamData {
+    #[serde(rename = "type")]
+    quality: i32,
+    #[serde(default)]
+    size: u64,
+    #[serde(default)]
+    cdns: Vec<String>,
+    qualities: Option<Vec<SongQuality>>,
+}
+
+#[derive(Deserialize)]
+struct SongQuality {
+    #[serde(rename = "type")]
+    quality: i32,
+}
+
+#[derive(Clone)]
+struct SongStream {
+    quality: i32,
+    size: u64,
+    urls: Vec<String>,
+    extension: &'static str,
+    lossless_available: bool,
+}
 
 /// Builds a reqwest HTTP client with the default user agent.
 ///
@@ -365,6 +453,160 @@ impl BiliApi {
         check_http_status(response.status())?;
         Ok(response)
     }
+}
+
+fn check_song_response(code: i64) -> Result<(), String> {
+    match code {
+        0 => Ok(()),
+        7201006 => Err("ERR::SONG_NOT_FOUND".into()),
+        4511006 => Err("ERR::SONG_UNAVAILABLE".into()),
+        -101 => Err("ERR::UNAUTHORIZED".into()),
+        _ => Err("ERR::SONG_API_ERROR".into()),
+    }
+}
+
+fn song_stream_extension(url: &str) -> Result<&'static str, String> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| "ERR::SONG_INVALID_STREAM")?;
+    // wiremock speaks HTTP only; permit its loopback URL in test builds, not
+    // signed production streams (which must never expose tokens over HTTP).
+    let local_test_url = cfg!(test)
+        && parsed.scheme() == "http"
+        && matches!(parsed.host_str(), Some("127.0.0.1" | "localhost"));
+    if (parsed.scheme() != "https" && !local_test_url) || parsed.host_str().is_none() {
+        return Err("ERR::SONG_INVALID_STREAM".into());
+    }
+    let ext = Path::new(parsed.path())
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default();
+    match ext.to_ascii_lowercase().as_str() {
+        "m4a" => Ok("m4a"),
+        "flac" => Ok("flac"),
+        "mp3" => Ok("mp3"),
+        "aac" => Ok("aac"),
+        _ => Err("ERR::SONG_FORMAT_UNSUPPORTED".into()),
+    }
+}
+
+fn parse_song_stream(data: SongStreamData) -> Result<SongStream, String> {
+    if data.quality == -1 {
+        return Err("ERR::SONG_PREVIEW_ONLY".into());
+    }
+    if !(0..=SONG_QUALITY_LOSSLESS).contains(&data.quality) {
+        return Err("ERR::SONG_QUALITY_UNSUPPORTED".into());
+    }
+    let first = data.cdns.first().ok_or("ERR::SONG_NO_STREAM")?;
+    let extension = song_stream_extension(first)?;
+    for url in data.cdns.iter().skip(1) {
+        if song_stream_extension(url)? != extension {
+            return Err("ERR::SONG_FORMAT_UNSUPPORTED".into());
+        }
+    }
+    Ok(SongStream {
+        quality: data.quality,
+        size: data.size,
+        urls: data.cdns,
+        extension,
+        lossless_available: data
+            .qualities
+            .unwrap_or_default()
+            .iter()
+            .any(|q| q.quality == SONG_QUALITY_LOSSLESS),
+    })
+}
+
+async fn song_api_get_with_timeout<T: serde::de::DeserializeOwned>(
+    api: &BiliApi,
+    path: &str,
+    query: &[(&str, String)],
+    timeout: Duration,
+) -> Result<SongApiResponse<T>, String> {
+    tokio::time::timeout(timeout, async {
+        api.get_q(path, query)
+            .await?
+            .json()
+            .await
+            .map_err(|e| format!("ERR::SONG_API_ERROR: {e}"))
+    })
+    .await
+    .map_err(|_| "ERR::SONG_API_ERROR".to_string())?
+}
+
+/// The web playback URL endpoint caps songs at 192K. The authenticated-capable
+/// endpoint returns the best stream permitted for the account when asked for
+/// quality 3; its `type`, not the requested quality, is the actual fidelity.
+async fn fetch_song_stream_with(
+    api: &BiliApi,
+    song_id: u64,
+    mid: u64,
+) -> Result<SongStream, String> {
+    let response: SongApiResponse<SongStreamData> = song_api_get_with_timeout(
+        api,
+        "/audio/music-service-c/url",
+        &[
+            ("songid", song_id.to_string()),
+            ("quality", SONG_QUALITY_LOSSLESS.to_string()),
+            ("privilege", "2".into()),
+            // Android-signed CDN URLs return 403 on desktop for au795267;
+            // pc returns the same 320K tier with a playable Range response.
+            ("platform", "pc".into()),
+            ("mid", mid.to_string()),
+        ],
+        SONG_API_TIMEOUT,
+    )
+    .await?;
+    check_song_response(response.code)?;
+    parse_song_stream(response.data.ok_or("ERR::SONG_NO_STREAM")?)
+}
+
+async fn fetch_song_info_with(api: &BiliApi, song_id: u64, mid: u64) -> Result<SongInfo, String> {
+    if song_id == 0 {
+        return Err("ERR::SONG_INVALID_ID".into());
+    }
+    // Test/E2E transports already use an explicit origin. Production keeps
+    // metadata on www.bilibili.com and quality selection on api.bilibili.com.
+    let web_base = if api.base == API_BASE {
+        SONG_WEB_BASE
+    } else {
+        api.base.as_str()
+    };
+    let response: SongApiResponse<SongMetadata> = song_api_get_with_timeout(
+        &api.with_base(web_base),
+        "/audio/music-service-c/web/song/info",
+        &[("sid", song_id.to_string())],
+        SONG_API_TIMEOUT,
+    )
+    .await?;
+    check_song_response(response.code)?;
+    let metadata = response.data.ok_or("ERR::SONG_NOT_FOUND")?;
+    if metadata.id != song_id || metadata.title.trim().is_empty() {
+        return Err("ERR::SONG_NOT_FOUND".into());
+    }
+    let stream = fetch_song_stream_with(api, song_id, mid).await?;
+    Ok(SongInfo {
+        id: song_id,
+        title: metadata.title,
+        author: metadata.author,
+        cover: metadata.cover.filter(|c| !c.is_empty()),
+        duration: metadata.duration,
+        audio_quality: stream.quality,
+        format: stream.extension,
+        lossless_available: stream.lossless_available,
+    })
+}
+
+fn song_mid(cookies: &[CookieEntry]) -> u64 {
+    cookies
+        .iter()
+        .find(|cookie| cookie.name == "DedeUserID" && is_bilibili_cookie_domain(&cookie.host))
+        .and_then(|cookie| cookie.value.parse().ok())
+        .unwrap_or(0)
+}
+
+pub async fn fetch_song_info(app: &AppHandle, song_id: u64) -> Result<SongInfo, String> {
+    let cookies = read_cookie(app)?.unwrap_or_default();
+    let api = BiliApi::from_cookie_header(build_cookie_header(&cookies))?;
+    fetch_song_info_with(&api, song_id, song_mid(&cookies)).await
 }
 
 /// Validates Bilibili API response and returns appropriate error codes.
@@ -717,6 +959,127 @@ pub async fn download_video(app: &AppHandle, options: &DownloadOptions) -> Resul
     let result = download_video_impl(app, options).await;
     session.settle(app, options, &result).await;
     result
+}
+
+/// Downloads a standalone audio stream without fetching video or re-encoding.
+pub async fn download_song(
+    app: &AppHandle,
+    options: &SongDownloadOptions,
+) -> Result<SongDownloadResult, String> {
+    let session = HistorySession::start_song(app, options);
+    let result = download_song_impl(app, options).await;
+    session.settle_song(app, &result);
+    result
+}
+
+async fn download_song_impl(
+    app: &AppHandle,
+    options: &SongDownloadOptions,
+) -> Result<SongDownloadResult, String> {
+    let cookies = read_cookie(app)?.unwrap_or_default();
+    let mid = song_mid(&cookies);
+    let api = BiliApi::from_cookie_header(build_cookie_header(&cookies))?;
+    let settings = settings::get_settings(app).await?;
+    let concurrency = Settings::resolve_segment_concurrency(&Some(settings.clone()));
+    download_song_impl_with(app, options, &api, mid, &settings, concurrency).await
+}
+
+async fn download_song_impl_with<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    options: &SongDownloadOptions,
+    api: &BiliApi,
+    mid: u64,
+    settings: &Settings,
+    concurrency: usize,
+) -> Result<SongDownloadResult, String> {
+    use crate::handlers::concurrency::DOWNLOAD_CANCEL_REGISTRY;
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    if options.song_id == 0 || options.download_id.trim().is_empty() {
+        return Err("ERR::SONG_INVALID_ID".into());
+    }
+    if DOWNLOAD_CANCEL_REGISTRY.is_cancelled(&options.download_id) {
+        DOWNLOAD_CANCEL_REGISTRY.clear_cancelled(&options.download_id);
+        return Err("ERR::CANCELLED".into());
+    }
+    let (cancel_token, _guard) = DOWNLOAD_CANCEL_REGISTRY.register(&options.download_id);
+    let stream = fetch_song_stream_with(api, options.song_id, mid).await?;
+    if cancel_token.is_cancelled() {
+        return Err("ERR::CANCELLED".into());
+    }
+    let desired = build_song_output_path_in(
+        settings.dl_output_path.as_deref(),
+        &options.filename,
+        stream.extension,
+        settings.title_replacements.as_deref(),
+    )?;
+    let reservation = reserve_output_path(&desired)?;
+    if stream.size > 0 {
+        ensure_free_space(
+            reservation.reserved_path(),
+            stream.size.saturating_add(5 * 1024 * 1024),
+        )?;
+    }
+
+    let staging = reservation.reserved_path().to_path_buf();
+    let original_format = stream.extension;
+    let song_id = options.song_id;
+    let download_id = options.download_id.clone();
+    let transport = api.clone();
+    let host_health = Arc::new(crate::utils::cdn_selector::HostHealth::new());
+    let resolved_quality = Arc::new(AtomicI32::new(stream.quality));
+    let quality_for_retry = resolved_quality.clone();
+    retry_download(app, &options.download_id, Some("audio"), move |attempt| {
+        let api = transport.clone();
+        let first = stream.clone();
+        let staging = staging.clone();
+        let id = download_id.clone();
+        let host_health = host_health.clone();
+        let cancel_token = cancel_token.clone();
+        let quality = quality_for_retry.clone();
+        async move {
+            let selected = if attempt == 1 {
+                first
+            } else {
+                fetch_song_stream_with(&api, song_id, mid)
+                    .await
+                    .map_err(anyhow::Error::msg)?
+            };
+            if cancel_token.is_cancelled() {
+                return Err(anyhow::anyhow!("ERR::CANCELLED"));
+            }
+            if selected.extension != original_format {
+                return Err(anyhow::anyhow!("ERR::SONG_FORMAT_CHANGED"));
+            }
+            quality.store(selected.quality, Ordering::Relaxed);
+            let mut urls = selected.urls.into_iter();
+            let primary = urls
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("ERR::SONG_NO_STREAM"))?;
+            let backups: Vec<String> = urls.collect();
+            download_url(
+                app,
+                primary,
+                (!backups.is_empty()).then_some(backups),
+                staging,
+                None,
+                true,
+                Some(id),
+                Some("audio"),
+                true,
+                concurrency,
+                host_health,
+            )
+            .await
+        }
+    })
+    .await?;
+
+    let final_path = reservation.complete()?;
+    Ok(SongDownloadResult {
+        output_path: final_path.to_string_lossy().into_owned(),
+        audio_quality: resolved_quality.load(Ordering::Relaxed),
+    })
 }
 
 /// Download body behind [`download_video`]; the wrapper owns the history
@@ -1701,6 +2064,210 @@ fn cleanup_subtitle_files(lib_path: &std::path::Path, download_id: &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn standalone_song_stream_uses_returned_quality_and_source_format() {
+        let stream = parse_song_stream(SongStreamData {
+            quality: 2,
+            size: 9_209_408,
+            cdns: vec!["https://upos.bilivideo.com/song-320k.m4a?upsig=secret".into()],
+            qualities: Some(vec![SongQuality { quality: 2 }, SongQuality { quality: 1 }]),
+        })
+        .unwrap();
+        assert_eq!(stream.quality, 2, "requested FLAC can resolve to 320K");
+        assert_eq!(stream.extension, "m4a");
+        assert!(!stream.lossless_available);
+
+        let lossless = parse_song_stream(SongStreamData {
+            quality: 3,
+            size: 34_000_000,
+            cdns: vec!["https://upos.bilivideo.com/song-flac.flac?expires=1".into()],
+            qualities: Some(vec![SongQuality { quality: 3 }]),
+        })
+        .unwrap();
+        assert_eq!(lossless.extension, "flac");
+        assert!(lossless.lossless_available);
+        assert_eq!(song_quality_to_string(lossless.quality), "FLAC");
+    }
+
+    #[test]
+    fn standalone_song_stream_rejects_preview_and_unsafe_urls() {
+        let preview = parse_song_stream(SongStreamData {
+            quality: -1,
+            size: 0,
+            cdns: vec!["https://upos.bilivideo.com/preview.m4a".into()],
+            qualities: None,
+        });
+        assert_eq!(preview.err().as_deref(), Some("ERR::SONG_PREVIEW_ONLY"));
+        assert_eq!(
+            song_stream_extension("http://example.com/song.m4a"),
+            Err("ERR::SONG_INVALID_STREAM".into())
+        );
+        assert_eq!(
+            song_stream_extension("https://example.com/song.txt"),
+            Err("ERR::SONG_FORMAT_UNSUPPORTED".into())
+        );
+        let missing = parse_song_stream(SongStreamData {
+            quality: 2,
+            size: 0,
+            cdns: vec![],
+            qualities: None,
+        });
+        assert_eq!(missing.err().as_deref(), Some("ERR::SONG_NO_STREAM"));
+    }
+
+    #[test]
+    fn standalone_song_filename_cannot_escape_download_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_str().unwrap();
+        let path =
+            build_song_output_path_in(Some(root), "..\\private/track?.mp3", "m4a", None).unwrap();
+        assert_eq!(path.parent(), Some(dir.path()));
+        assert_eq!(path.extension().and_then(|e| e.to_str()), Some("m4a"));
+        assert_eq!(
+            build_song_output_path_in(Some(root), "CON", "flac", None)
+                .unwrap()
+                .file_name()
+                .and_then(|n| n.to_str()),
+            Some("_CON.flac")
+        );
+        assert_eq!(
+            build_song_output_path_in(Some(root), "   ...", "m4a", None),
+            Err("ERR::SONG_INVALID_FILENAME".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn standalone_song_metadata_reports_actual_available_quality() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::path(
+            "/audio/music-service-c/web/song/info",
+        ))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "code": 0,
+                "data": {
+                    "id": 821521, "title": "Song", "author": "Artist",
+                    "cover": "https://i0.hdslb.com/song.jpg", "duration": 229
+                }
+            })),
+        )
+        .mount(&server)
+        .await;
+        wiremock::Mock::given(wiremock::matchers::path("/audio/music-service-c/url"))
+            .and(wiremock::matchers::query_param("quality", "3"))
+            .and(wiremock::matchers::query_param("mid", "42"))
+            .and(wiremock::matchers::query_param("platform", "pc"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "code": 0,
+                    "data": {
+                        "type": 2, "size": 9209408,
+                        "cdns": ["https://upos.bilivideo.com/song-320k.m4a?upsig=secret"],
+                        "qualities": [{"type": 2}, {"type": 1}]
+                    }
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        let client = Client::builder().pool_max_idle_per_host(0).build().unwrap();
+        let api = BiliApi::new(client, server.uri(), "SESSDATA=test; DedeUserID=42");
+        let info_result = fetch_song_info_with(&api, 821521, 42).await;
+        if let Err(error) = &info_result {
+            let paths: Vec<_> = server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .map(|request| request.url.to_string())
+                .collect();
+            panic!("song metadata failed: {error}; requests: {paths:?}");
+        }
+        let info = info_result.unwrap();
+        assert_eq!(info.title, "Song");
+        assert_eq!(info.author, "Artist");
+        assert_eq!(info.audio_quality, 2);
+        assert_eq!(info.format, "m4a");
+        assert!(!info.lossless_available);
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests.iter().all(|r| r.headers.get("cookie").is_some()));
+        assert!(!serde_json::to_string(&info).unwrap().contains("upsig"));
+    }
+
+    #[tokio::test]
+    async fn standalone_song_api_timeout_fails_explicitly() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::path("/song/slow"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_delay(Duration::from_millis(80)))
+            .mount(&server)
+            .await;
+        let result = song_api_get_with_timeout::<SongMetadata>(
+            &bili_api_mock(&server.uri(), ""),
+            "/song/slow",
+            &[],
+            Duration::from_millis(5),
+        )
+        .await;
+        assert_eq!(result.err().as_deref(), Some("ERR::SONG_API_ERROR"));
+    }
+
+    #[tokio::test]
+    async fn standalone_song_download_preserves_source_bytes_without_video() {
+        for (quality, extension) in [(2, "m4a"), (3, "flac")] {
+            let server = wiremock::MockServer::start().await;
+            let body: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+            let media_path = format!("/media/song.{extension}");
+            mount_good_media(&server, &media_path, body.clone()).await;
+            wiremock::Mock::given(wiremock::matchers::path("/audio/music-service-c/url"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({
+                        "code": 0,
+                        "data": {
+                            "type": quality, "size": body.len(),
+                            "cdns": [format!("{}{}", server.uri(), media_path)],
+                            "qualities": [{"type": quality}]
+                        }
+                    }),
+                ))
+                .mount(&server)
+                .await;
+
+            let dir = tempfile::tempdir().unwrap();
+            let settings = Settings {
+                dl_output_path: Some(dir.path().to_str().unwrap().into()),
+                ..Settings::default()
+            };
+            let app = tauri::test::mock_app();
+            let result = download_song_impl_with(
+                app.handle(),
+                &SongDownloadOptions {
+                    song_id: 821521,
+                    filename: "Song?".into(),
+                    download_id: format!("song-{extension}"),
+                    thumbnail_url: None,
+                },
+                &bili_api_mock(&server.uri(), "SESSDATA=secret"),
+                0,
+                &settings,
+                1,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(result.audio_quality, quality);
+            let final_path = dir.path().join(format!("Song.{extension}"));
+            assert_eq!(PathBuf::from(result.output_path), final_path);
+            assert_eq!(fs::read(&final_path).unwrap(), body);
+            assert!(!dir.path().join(format!("Song.part.{extension}")).exists());
+            assert!(!lock_sidecar_path(&final_path).exists());
+            let requests = server.received_requests().await.unwrap();
+            assert!(requests
+                .iter()
+                .filter(|r| r.url.path() == media_path)
+                .all(|r| r.headers.get("cookie").is_none()));
+        }
+    }
 
     // ---- PR④: metadata fetchers via injected transport ----
 
@@ -5749,6 +6316,68 @@ fn build_output_path_in(dl_output_path: Option<&str>, filename: &str) -> Result<
     };
 
     Ok(PathBuf::from(output_path).join(filename_with_ext))
+}
+
+fn build_song_output_path_in(
+    dl_output_path: Option<&str>,
+    filename: &str,
+    extension: &str,
+    replacements: Option<&[crate::models::settings::TitleReplacement]>,
+) -> Result<PathBuf, String> {
+    if !matches!(extension, "m4a" | "flac" | "mp3" | "aac") {
+        return Err("ERR::SONG_FORMAT_UNSUPPORTED".into());
+    }
+    let output_dir =
+        dl_output_path.ok_or_else(|| "Download output path is not configured".to_string())?;
+    let replaced = crate::utils::sanitize::apply_title_replacements(filename, replacements);
+    let safe_name: String = replaced
+        .chars()
+        .take(180)
+        .map(|ch| {
+            if ch.is_control() || matches!(ch, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+            {
+                '_'
+            } else {
+                ch
+            }
+        })
+        .collect();
+    let safe_name = safe_name.trim().trim_end_matches(['.', ' ']);
+    if safe_name.is_empty() || safe_name == ".." {
+        return Err("ERR::SONG_INVALID_FILENAME".into());
+    }
+    let stem = safe_name.split('.').next().unwrap_or_default();
+    let reserved = matches!(
+        stem.to_ascii_uppercase().as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    );
+    let safe_name = if reserved {
+        format!("_{safe_name}")
+    } else {
+        safe_name.to_string()
+    };
+    Ok(PathBuf::from(output_dir).join(format!("{safe_name}.{extension}")))
 }
 
 /// Gets the Content-Length of a resource via HEAD request.

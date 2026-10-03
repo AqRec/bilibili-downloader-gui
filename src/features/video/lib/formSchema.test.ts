@@ -28,6 +28,8 @@ describe('buildVideoFormSchema1 — url', () => {
     ['https://www.bilibili.com/video/BV1xx411c7XD'],
     ['https://www.bilibili.com/video/BV1xx411c7Xd?p=2'],
     ['https://www.bilibili.com/bangumi/play/ep3051843'],
+    ['https://www.bilibili.com/audio/au821521'],
+    ['https://www.bilibili.com/audio/au821521?from=search'],
     ['https://b23.tv/BV1xx411c7XD'],
   ])('accepts %s', (url) => {
     expect(parseUrl(url).success).toBe(true)
@@ -82,12 +84,20 @@ describe('buildVideoFormSchema1 — url', () => {
       'validation.video.url.bangumi_list',
     ],
     ['https://www.bilibili.com/cheese/play/ep1', 'validation.video.url.cheese'],
-    ['https://www.bilibili.com/audio/au123', 'validation.video.url.audio'],
+    ['https://www.bilibili.com/audio/am123', 'validation.video.url.audio'],
     ['https://www.bilibili.com/read/cv123', 'validation.video.url.article'],
   ])('rejects unsupported pathname %s with a specific key', (url, key) => {
     const result = parseUrl(url)
     expect(result.success).toBe(false)
     expect(issueKeys(result)).toContain(key)
+  })
+
+  it.each([
+    'https://www.bilibili.com/audio/au0',
+    'https://www.bilibili.com/audio/au123/not-a-song',
+    'https://www.bilibili.com/audio/au9007199254740992',
+  ])('rejects malformed standalone audio URL %s', (url) => {
+    expect(parseUrl(url).success).toBe(false)
   })
 })
 

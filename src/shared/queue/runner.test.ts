@@ -58,6 +58,11 @@ function payload(cid: number): DownloadPartPayload {
   }
 }
 
+function videoCid(value: DownloadPartPayload): number {
+  if (value.kind === 'audio') throw new Error('expected a video part')
+  return value.cid
+}
+
 function spec(partIndex: number, cid: number) {
   return {
     partIndex,
@@ -104,8 +109,8 @@ describe('createQueueRunner', () => {
 
     const executed: number[] = []
     createQueueRunner(async (p) => {
-      executed.push(p.cid)
-      return `/out/${p.cid}.mp4`
+      executed.push(videoCid(p))
+      return `/out/${videoCid(p)}.mp4`
     }, asRunnerStore).start()
     await settle()
 
@@ -120,12 +125,55 @@ describe('createQueueRunner', () => {
     ).toBe(true)
   })
 
+  it('records the actual downloaded song quality and output path', async () => {
+    store.dispatch(
+      enqueueSession({
+        contentType: 'audio',
+        videoId: 'au821521',
+        videoTitle: 'Song',
+        parts: [
+          {
+            partIndex: 1,
+            title: 'Song',
+            thumbnailUrl: null,
+            expectedStages: {
+              audioStage: true,
+              videoStage: false,
+              mergeStage: false,
+            },
+            payload: {
+              kind: 'audio',
+              songId: 821521,
+              filename: 'Song',
+              durationSeconds: 229,
+              thumbnailUrl: null,
+              page: null,
+              expectedQuality: 2,
+              format: 'm4a',
+            },
+          },
+        ],
+      }) as never,
+    )
+    createQueueRunner(async (p) => {
+      if (p.kind !== 'audio') throw new Error('expected song')
+      return { outputPath: '/out/Song.flac', audioQuality: 3 }
+    }, asRunnerStore).start()
+    await settle()
+
+    const song = items().find((i) => i.kind === 'part')!
+    expect(song.status).toBe('done')
+    expect(song.resolvedAudioQuality).toBe(3)
+    expect(song.outputPath).toBe('/out/Song.flac')
+    expect(parentOf('au821521').status).toBe('done')
+  })
+
   it('a per-part ERR::CANCELLED rejection skips the part and continues', async () => {
     enqueueTwoPartSession('BVa', 1)
 
     createQueueRunner(async (p) => {
-      if (p.cid === 1) throw new Error('ERR::CANCELLED')
-      return `/out/${p.cid}.mp4`
+      if (videoCid(p) === 1) throw new Error('ERR::CANCELLED')
+      return `/out/${videoCid(p)}.mp4`
     }, asRunnerStore).start()
     await settle()
 
@@ -140,13 +188,13 @@ describe('createQueueRunner', () => {
     enqueueTwoPartSession('BVb', 10)
 
     createQueueRunner(async (p) => {
-      if (p.cid === 1) {
+      if (videoCid(p) === 1) {
         // Simulate cancelParentDownloads landing mid-part: the subtree
         // flips to cancelling, then the executor rejects.
         await store.dispatch(cancelParentDownloads(parentOf('BVa').downloadId))
         throw new Error('ERR::CANCELLED')
       }
-      return `/out/${p.cid}.mp4`
+      return `/out/${videoCid(p)}.mp4`
     }, asRunnerStore).start()
     await settle()
 
@@ -168,8 +216,8 @@ describe('createQueueRunner', () => {
     enqueueTwoPartSession('BVa', 1)
 
     createQueueRunner(async (p) => {
-      if (p.cid === 1) throw new Error('ERR::NETWORK blew up')
-      return `/out/${p.cid}.mp4`
+      if (videoCid(p) === 1) throw new Error('ERR::NETWORK blew up')
+      return `/out/${videoCid(p)}.mp4`
     }, asRunnerStore).start()
     await settle()
 
@@ -193,7 +241,7 @@ describe('createQueueRunner', () => {
 
     const executed: number[] = []
     createQueueRunner(async (p) => {
-      executed.push(p.cid)
+      executed.push(videoCid(p))
       return '/out/x.mp4'
     }, asRunnerStore).start()
     await settle()
@@ -206,7 +254,7 @@ describe('createQueueRunner', () => {
   it('an enqueue after start kicks an idle runner', async () => {
     const executed: number[] = []
     createQueueRunner(async (p) => {
-      executed.push(p.cid)
+      executed.push(videoCid(p))
       return '/out/x.mp4'
     }, asRunnerStore).start()
     await settle()
@@ -229,13 +277,13 @@ describe('createQueueRunner', () => {
     const executed: number[] = []
     let rejectFirst!: (e: Error) => void
     createQueueRunner((p) => {
-      if (p.cid === 1) {
+      if (videoCid(p) === 1) {
         return new Promise<string>((_resolve, reject) => {
           rejectFirst = reject
         })
       }
-      executed.push(p.cid)
-      return Promise.resolve(`/out/${p.cid}.mp4`)
+      executed.push(videoCid(p))
+      return Promise.resolve(`/out/${videoCid(p)}.mp4`)
     }, asRunnerStore).start()
     await tick()
     expect(items().find((i) => i.kind === 'part' && i.cid === 1)?.status).toBe(

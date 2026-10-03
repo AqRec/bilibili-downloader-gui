@@ -9,15 +9,19 @@
 import { store } from '@/app/store'
 import DownloadsContent from '@/pages/downloads'
 import { TooltipProvider } from '@/shared/animate-ui/radix/tooltip'
-import { setProgress } from '@/shared/progress/progressSlice'
-import { updateQueueItem } from '@/shared/queue'
+import { clearProgress, setProgress } from '@/shared/progress/progressSlice'
+import {
+  enqueueSession,
+  updateQueueItem,
+  updateQueueStatus,
+} from '@/shared/queue'
 import {
   mockInvoke,
   renderWithProviders,
   resetQueue,
   seedSession,
 } from '@/test/test-utils'
-import { screen } from '@testing-library/react'
+import { act, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/shared/ui/toast', () => ({
@@ -28,6 +32,7 @@ describe('DownloadsContent', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetQueue()
+    store.dispatch(clearProgress())
   })
 
   it('shows the empty state when the queue has no parts', () => {
@@ -61,6 +66,81 @@ describe('DownloadsContent', () => {
     expect(
       screen.getAllByText('downloadStatus.status_downloading').length,
     ).toBeGreaterThan(0)
+  })
+
+  it('shows only an audio progress stage and the source quality for an au song', () => {
+    store.dispatch(
+      enqueueSession({
+        contentType: 'audio',
+        videoId: 'au821521',
+        videoTitle: 'Song',
+        parts: [
+          {
+            partIndex: 1,
+            title: 'Song',
+            thumbnailUrl: null,
+            expectedStages: {
+              audioStage: true,
+              videoStage: false,
+              mergeStage: false,
+            },
+            payload: {
+              kind: 'audio',
+              songId: 821521,
+              filename: 'Song',
+              durationSeconds: 229,
+              thumbnailUrl: null,
+              page: null,
+              expectedQuality: 2,
+              format: 'm4a',
+            },
+          },
+        ],
+      }),
+    )
+    const songId = store
+      .getState()
+      .queue.find((item) => item.kind === 'part')!.downloadId
+    store.dispatch(updateQueueStatus({ downloadId: songId, status: 'running' }))
+    store.dispatch(
+      setProgress({
+        downloadId: songId,
+        deltaTime: 1,
+        filesize: 10,
+        downloaded: 6.5,
+        transferRate: 120,
+        percentage: 65,
+        elapsedTime: 1,
+        isComplete: false,
+        stage: 'audio',
+      }),
+    )
+
+    renderWithProviders(
+      <TooltipProvider>
+        <DownloadsContent />
+      </TooltipProvider>,
+      { route: '/downloads' },
+    )
+
+    expect(screen.getByText(/song\.quality\.q320/)).toBeInTheDocument()
+    expect(screen.getByLabelText('video.stage_audio')).toBeInTheDocument()
+    expect(screen.queryByLabelText('video.stage_video')).toBeNull()
+    expect(screen.queryByLabelText('video.stage_merge')).toBeNull()
+
+    act(() => {
+      store.dispatch(
+        updateQueueItem({
+          downloadId: songId,
+          outputPath: 'C:\\Music\\Song.flac',
+          resolvedAudioQuality: 3,
+          status: 'done',
+        }),
+      )
+    })
+    expect(
+      screen.getByText(/song\.quality\.lossless \/ FLAC/),
+    ).toBeInTheDocument()
   })
 
   it('splits rows into Downloading / Queued / Finished sections', () => {
