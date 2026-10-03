@@ -73,6 +73,7 @@ Extrae el ZIP completo antes de ejecutar el programa. Ambas ediciones requieren 
 ### Descarga
 
 - **Descarga de video de alta calidad** - Elige cualquier calidad: 8K/4K/1080p/720p/HDR10/Dolby Vision
+- **Audio original junto al vídeo** - Actívalo en los ajustes de descarga para copiar la pista seleccionada como M4A junto al MP4 sin recodificar (FLAC sin pérdida sigue siendo FLAC). Si falla la copia adicional, el vídeo se guarda igualmente
 - **Soporte de Bangumi (anime y series)** - Descarga episodios de anime y series además de videos regulares
 - **Guardado por lotes de videos multiparte** - Descarga automáticamente todas las partes de cursos, series, etc.
 - **Descargas rápidas y estables** - Cambio automático de CDN con reintento automático ante errores de red

@@ -18,7 +18,7 @@ use std::{
     process::Stdio,
 };
 use tauri::{AppHandle, Manager, Runtime};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command as AsyncCommand;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
@@ -1004,6 +1004,113 @@ pub async fn merge_avs(
     .await
 }
 
+/// Remuxes an audio stream into a standalone container without re-encoding.
+fn build_audio_sidecar_args(input: &Path, output: &Path) -> Result<Vec<String>, String> {
+    let input = input
+        .to_str()
+        .ok_or_else(|| "ERR::AUDIO_SIDECAR_FAILED".to_string())?;
+    let output = output
+        .to_str()
+        .ok_or_else(|| "ERR::AUDIO_SIDECAR_FAILED".to_string())?;
+    Ok([
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-i",
+        input,
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-c:a",
+        "copy",
+        "-y",
+        output,
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect())
+}
+
+pub async fn copy_audio_sidecar(
+    app: &AppHandle,
+    input: &Path,
+    output: &Path,
+    cancel: CancellationToken,
+) -> Result<(), String> {
+    copy_audio_sidecar_with_ffmpeg(&get_ffmpeg_path(app), input, output, cancel).await
+}
+
+/// Path-injected seam for testing the no-transcode sidecar operation.
+pub(crate) async fn copy_audio_sidecar_with_ffmpeg(
+    ffmpeg_path: &Path,
+    input: &Path,
+    output: &Path,
+    cancel: CancellationToken,
+) -> Result<(), String> {
+    if cancel.is_cancelled() {
+        return Err("ERR::CANCELLED".into());
+    }
+    let mut cmd = AsyncCommand::new(ffmpeg_path);
+    cmd.args(build_audio_sidecar_args(input, output)?)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("ERR::AUDIO_SIDECAR_FAILED: {e}"))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "ERR::AUDIO_SIDECAR_FAILED".to_string())?;
+    let stderr_task = tokio::spawn(async move {
+        let mut captured = Vec::new();
+        stderr.read_to_end(&mut captured).await.map(|_| captured)
+    });
+
+    let status = tokio::select! {
+        result = child.wait() => result.map_err(|e| format!("ERR::AUDIO_SIDECAR_FAILED: {e}"))?,
+        _ = cancel.cancelled() => {
+            if let Err(e) = child.kill().await {
+                log::warn!("[BE] audio sidecar: failed to stop ffmpeg after cancellation: {e}");
+            }
+            let _ = child.wait().await;
+            let _ = stderr_task.await;
+            return Err("ERR::CANCELLED".into());
+        }
+    };
+    let stderr = stderr_task
+        .await
+        .map_err(|e| format!("ERR::AUDIO_SIDECAR_FAILED: {e}"))?
+        .map_err(|e| format!("ERR::AUDIO_SIDECAR_FAILED: {e}"))?;
+    if !status.success() {
+        log::warn!(
+            "[BE] audio sidecar: ffmpeg exit={} stderr={}",
+            status,
+            String::from_utf8_lossy(&stderr)
+                .chars()
+                .take(400)
+                .collect::<String>()
+        );
+        return Err("ERR::AUDIO_SIDECAR_FAILED".into());
+    }
+    let file_size = tokio::fs::metadata(output)
+        .await
+        .map_err(|e| format!("ERR::AUDIO_SIDECAR_FAILED: {e}"))?
+        .len();
+    if file_size == 0 {
+        return Err("ERR::AUDIO_SIDECAR_FAILED".into());
+    }
+    Ok(())
+}
+
 /// Path-injected split of [`merge_avs`] (test seam, issue #646): runs the
 /// same copy → AAC-fallback flow against an explicit ffmpeg binary so tests
 /// drive it with a fake script in a tempdir, mirroring
@@ -1312,6 +1419,21 @@ async fn run_merge_ffmpeg<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audio_sidecar_args_copy_original_track_without_transcoding() {
+        let args =
+            build_audio_sidecar_args(Path::new("source.m4s"), Path::new("Song.part.m4a")).unwrap();
+        assert_eq!(
+            args.windows(2)
+                .find(|pair| pair[0] == "-c:a")
+                .map(|pair| pair[1].as_str()),
+            Some("copy")
+        );
+        assert!(args.windows(2).any(|pair| pair == ["-map", "0:a:0"]));
+        assert!(!args.iter().any(|arg| arg == "aac" || arg == "libmp3lame"));
+        assert_eq!(args.last().map(String::as_str), Some("Song.part.m4a"));
+    }
 
     #[test]
     fn all_download_sources_match_platform_and_have_pinned_checksums() {

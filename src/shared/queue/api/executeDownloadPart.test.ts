@@ -71,4 +71,30 @@ describe('executeDownloadPart', () => {
       ),
     ).rejects.toThrow('ERR::CANCELLED')
   })
+
+  it('includes the audio sidecar preference only when enabled', async () => {
+    mockInvoke.mockResolvedValueOnce('/out/part.mp4')
+    await executeDownloadPart(
+      {
+        videoId: 'BV1test',
+        cid: 1,
+        filename: 'part',
+        quality: null,
+        audioQuality: null,
+        saveAudioWithVideo: true,
+        durationSeconds: 60,
+        thumbnailUrl: null,
+        page: 1,
+        epId: null,
+        subtitle: null,
+      },
+      { downloadId: 'BV1test-job-p1', parentId: 'BV1test-job' },
+    )
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'download_video',
+      expect.objectContaining({
+        options: expect.objectContaining({ saveAudioWithVideo: true }),
+      }),
+    )
+  })
 })

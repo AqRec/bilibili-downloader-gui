@@ -55,6 +55,16 @@ interface SubtitleWarningPayload {
   failedLanguages: string[]
 }
 
+interface AudioSidecarSavedPayload {
+  downloadId: string
+  outputPath: string
+}
+
+interface AudioSidecarWarningPayload {
+  downloadId: string
+  reason: 'noAudio' | 'failed'
+}
+
 /**
  * Resolves whether a resolved-event downloadId belongs to the video
  * currently displayed on /search (issue #691 pollution guard).
@@ -100,6 +110,7 @@ const ListenerContext = createContext<boolean>(false)
  * - `download-quality-resolved` - Updates resolved video/audio quality in state
  * - `download-subtitle-resolved` - Updates resolved subtitle mode and labels in state
  * - `download-subtitle-warning` - Shows a warning toast when subtitle downloads fail
+ * - `download-audio-sidecar-saved` / `-warning` - Reports the optional original-audio copy
  *
  * All listeners are automatically cleaned up when the component unmounts.
  *
@@ -122,6 +133,8 @@ export const ListenerProvider: FC<{ children: ReactNode }> = ({ children }) => {
     let unlistenSubtitleResolved: UnlistenFn | undefined
     let unlistenSubtitleWarning: UnlistenFn | undefined
     let unlistenRetrying: UnlistenFn | undefined
+    let unlistenAudioSidecarSaved: UnlistenFn | undefined
+    let unlistenAudioSidecarWarning: UnlistenFn | undefined
 
     const setupListeners = async (): Promise<void> => {
       // Setup progress event listener
@@ -280,6 +293,27 @@ export const ListenerProvider: FC<{ children: ReactNode }> = ({ children }) => {
         },
       )
 
+      unlistenAudioSidecarSaved = await listen<AudioSidecarSavedPayload>(
+        'download-audio-sidecar-saved',
+        (event) => {
+          const filename = event.payload.outputPath.split(/[\\/]/).pop()
+          toast.success(i18n.t('video.audio_sidecar_saved', { filename }), {
+            duration: 6000,
+          })
+        },
+      )
+
+      unlistenAudioSidecarWarning = await listen<AudioSidecarWarningPayload>(
+        'download-audio-sidecar-warning',
+        (event) => {
+          const key =
+            event.payload.reason === 'noAudio'
+              ? 'video.audio_sidecar_no_audio'
+              : 'video.audio_sidecar_failed'
+          toast.warning(i18n.t(key), { duration: 6000 })
+        },
+      )
+
       // Setup download retrying event listener
       // Updates isRetrying flag on matching progress entries to hide
       // transfer rate display during CDN rotation / full retry.
@@ -301,6 +335,8 @@ export const ListenerProvider: FC<{ children: ReactNode }> = ({ children }) => {
       unlistenSubtitleResolved?.()
       unlistenSubtitleWarning?.()
       unlistenRetrying?.()
+      unlistenAudioSidecarSaved?.()
+      unlistenAudioSidecarWarning?.()
     }
   }, [])
   return (

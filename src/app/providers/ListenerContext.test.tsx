@@ -1,7 +1,7 @@
 /**
  * ListenerContext suite.
  *
- * The provider wires 7 Tauri events into the real singleton store. Tests
+ * The provider wires Tauri events into the real singleton store. Tests
  * drive the globally mocked `@tauri-apps/api/event` through the in-memory
  * bus (emitTauriEvent) and assert Redux state; toast content is asserted
  * via a local toast spy.
@@ -208,6 +208,41 @@ describe('download_cancelled', () => {
     })
 
     expect(queue().find((q) => q.downloadId === d1)!.status).toBe('error')
+  })
+})
+
+describe('optional source-audio sidecar events', () => {
+  it('notifies the user after an M4A file is saved', async () => {
+    await mount()
+    act(() => {
+      emitTauriEvent('download-audio-sidecar-saved', {
+        downloadId: 'd1',
+        outputPath: 'C:\\Music\\Song.m4a',
+      })
+    })
+    expect(toast.success).toHaveBeenCalledWith('video.audio_sidecar_saved', {
+      duration: 6000,
+    })
+  })
+
+  it('distinguishes videos with no audio from a failed remux', async () => {
+    await mount()
+    act(() => {
+      emitTauriEvent('download-audio-sidecar-warning', {
+        downloadId: 'd1',
+        reason: 'noAudio',
+      })
+      emitTauriEvent('download-audio-sidecar-warning', {
+        downloadId: 'd2',
+        reason: 'failed',
+      })
+    })
+    expect(toast.warning).toHaveBeenCalledWith('video.audio_sidecar_no_audio', {
+      duration: 6000,
+    })
+    expect(toast.warning).toHaveBeenCalledWith('video.audio_sidecar_failed', {
+      duration: 6000,
+    })
   })
 })
 

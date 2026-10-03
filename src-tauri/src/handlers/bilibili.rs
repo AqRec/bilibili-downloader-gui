@@ -138,6 +138,9 @@ pub struct DownloadOptions {
     pub quality: Option<i32>,
     /// Audio quality ID (optional for durl format where audio is embedded)
     pub audio_quality: Option<i32>,
+    /// Save a stream-copied source audio file alongside the completed MP4.
+    #[serde(default)]
+    pub save_audio_with_video: bool,
     /// Unique identifier for tracking this download
     pub download_id: String,
     /// Parent download ID for multi-part videos (optional)
@@ -789,6 +792,18 @@ async fn download_video_impl(app: &AppHandle, options: &DownloadOptions) -> Resu
                 .await
             })
         },
+        &move |audio_path: &Path, output_path: &Path, cancel_token| {
+            let app = app.clone();
+            Box::pin(async move {
+                crate::handlers::ffmpeg::copy_audio_sidecar(
+                    &app,
+                    audio_path,
+                    output_path,
+                    cancel_token,
+                )
+                .await
+            })
+        },
     )
     .await
 }
@@ -799,6 +814,125 @@ async fn download_video_impl(app: &AppHandle, options: &DownloadOptions) -> Resu
 /// must stay `Send`.
 type MergeFuture<'a> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>>;
+
+type AudioCopyFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>>;
+
+fn emit_audio_sidecar_warning<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    download_id: &str,
+    reason: &str,
+) {
+    let _ = app.emit(
+        "download-audio-sidecar-warning",
+        serde_json::json!({"downloadId": download_id, "reason": reason}),
+    );
+}
+
+/// Keeps the extra stream in a reserved staging name until the MP4 succeeds.
+/// An optional sidecar failure warns the user but never discards the video.
+async fn prepare_audio_sidecar_with<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    options: &DownloadOptions,
+    video_reservation: &OutputReservation,
+    audio_source: Option<&Path>,
+    quality: Option<i32>,
+    cancel_token: tokio_util::sync::CancellationToken,
+    copy_audio: &(dyn for<'a> Fn(&'a Path, &'a Path, tokio_util::sync::CancellationToken) -> AudioCopyFuture<'a>
+          + Sync),
+) -> Result<Option<OutputReservation>, String> {
+    if !options.save_audio_with_video {
+        return Ok(None);
+    }
+    let Some(source) = audio_source else {
+        emit_audio_sidecar_warning(app, &options.download_id, "noAudio");
+        return Ok(None);
+    };
+    let ext = if quality == Some(30251) {
+        "flac"
+    } else {
+        "m4a"
+    };
+    let desired = video_reservation.final_path.with_extension(ext);
+    let sidecar = match reserve_output_path(&desired) {
+        Ok(reservation) => reservation,
+        Err(e) => {
+            log::warn!(
+                "[BE] audio sidecar: cannot reserve file id={}: {e}",
+                options.download_id
+            );
+            emit_audio_sidecar_warning(app, &options.download_id, "failed");
+            return Ok(None);
+        }
+    };
+    if let Ok(metadata) = tokio::fs::metadata(source).await {
+        if let Err(e) = ensure_free_space(
+            sidecar.reserved_path(),
+            metadata.len().saturating_add(1024 * 1024),
+        ) {
+            log::warn!(
+                "[BE] audio sidecar: insufficient space id={}: {e}",
+                options.download_id
+            );
+            emit_audio_sidecar_warning(app, &options.download_id, "failed");
+            return Ok(None);
+        }
+    }
+    if let Err(e) = copy_audio(source, sidecar.reserved_path(), cancel_token.clone()).await {
+        if e.contains("ERR::CANCELLED") || cancel_token.is_cancelled() {
+            return Err("ERR::CANCELLED".into());
+        }
+        log::warn!(
+            "[BE] audio sidecar: copy failed id={}: {e}",
+            options.download_id
+        );
+        emit_audio_sidecar_warning(app, &options.download_id, "failed");
+        return Ok(None);
+    }
+    if cancel_token.is_cancelled() {
+        return Err("ERR::CANCELLED".into());
+    }
+    if !matches!(tokio::fs::metadata(sidecar.reserved_path()).await, Ok(m) if m.len() > 0) {
+        log::warn!(
+            "[BE] audio sidecar: copy produced no file id={}",
+            options.download_id
+        );
+        emit_audio_sidecar_warning(app, &options.download_id, "failed");
+        return Ok(None);
+    }
+    Ok(Some(sidecar))
+}
+
+fn finish_video_with_audio_sidecar<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    video: OutputReservation,
+    sidecar: Option<OutputReservation>,
+    download_id: &str,
+) -> Result<PathBuf, String> {
+    // If video finalization fails, the sidecar reservation is dropped and
+    // its staging file is removed; neither file is presented as complete.
+    let video_path = video.complete()?;
+    if let Some(sidecar) = sidecar {
+        match sidecar.complete() {
+            Ok(path) => {
+                if let Err(e) = app.emit(
+                    "download-audio-sidecar-saved",
+                    serde_json::json!({
+                        "downloadId": download_id,
+                        "outputPath": path.to_string_lossy(),
+                    }),
+                ) {
+                    log::warn!("[BE] audio sidecar: saved but notification failed: {e}");
+                }
+            }
+            Err(e) => {
+                log::warn!("[BE] audio sidecar: finalize failed id={download_id}: {e}");
+                emit_audio_sidecar_warning(app, download_id, "failed");
+            }
+        }
+    }
+    Ok(video_path)
+}
 
 /// Dependency-injected download flow (test seam, issue #646): runs the real
 /// staging→download→subtitle→merge→finalize pipeline against explicit inputs
@@ -825,6 +959,8 @@ async fn download_video_impl_with<R: tauri::Runtime>(
         crate::handlers::ffmpeg::MergeMode,
         tokio_util::sync::CancellationToken,
     ) -> MergeFuture<'a>
+          + Sync),
+    copy_audio: &(dyn for<'a> Fn(&'a Path, &'a Path, tokio_util::sync::CancellationToken) -> AudioCopyFuture<'a>
           + Sync),
 ) -> Result<String, String> {
     use crate::handlers::concurrency::DOWNLOAD_CANCEL_REGISTRY;
@@ -885,7 +1021,7 @@ async fn download_video_impl_with<R: tauri::Runtime>(
         if player_result.dash.is_none() {
             // Finalize: rename the completed staging file to its final name;
             // on error the reservation's Drop removes the staging file.
-            return download_bangumi_durl(
+            download_bangumi_durl(
                 app,
                 options,
                 reservation.reserved_path(),
@@ -895,8 +1031,23 @@ async fn download_video_impl_with<R: tauri::Runtime>(
                 host_health,
                 segment_concurrency,
             )
-            .await
-            .and_then(|_| reservation.complete())
+            .await?;
+            let sidecar = prepare_audio_sidecar_with(
+                app,
+                options,
+                &reservation,
+                Some(reservation.reserved_path()),
+                None,
+                cancel_token.clone(),
+                copy_audio,
+            )
+            .await?;
+            return finish_video_with_audio_sidecar(
+                app,
+                reservation,
+                sidecar,
+                &options.download_id,
+            )
             .map(|p| p.to_string_lossy().into_owned());
         }
         // DASH format: convert the already-fetched result instead of re-fetching.
@@ -929,7 +1080,7 @@ async fn download_video_impl_with<R: tauri::Runtime>(
     // finalize). Registry cleanup is handled by the CancelTokenGuard held in
     // download_video.
     if data.dash.is_none() {
-        let result: Result<(), String> = async {
+        let result: Result<Option<OutputReservation>, String> = async {
             let durl_segments = data
                 .durl
                 .as_ref()
@@ -1029,9 +1180,16 @@ async fn download_video_impl_with<R: tauri::Runtime>(
             )
             .await?;
 
-            // History recording is settled by download_video's HistorySession
-            // from the finalized path (issue #511).
-            Ok(())
+            prepare_audio_sidecar_with(
+                app,
+                options,
+                &reservation,
+                Some(reservation.reserved_path()),
+                None,
+                cancel_token.clone(),
+                copy_audio,
+            )
+            .await
         }
         .await;
 
@@ -1039,7 +1197,9 @@ async fn download_video_impl_with<R: tauri::Runtime>(
         // error the reservation's Drop removes the staging file. Registry
         // cleanup is handled by the CancelTokenGuard held in download_video.
         let result = result
-            .and_then(|_| reservation.complete())
+            .and_then(|sidecar| {
+                finish_video_with_audio_sidecar(app, reservation, sidecar, &options.download_id)
+            })
             .map(|p| p.to_string_lossy().into_owned());
 
         return result;
@@ -1343,6 +1503,17 @@ async fn download_video_impl_with<R: tauri::Runtime>(
             return Err("ERR::CANCELLED".to_string());
         }
 
+        let audio_sidecar = prepare_audio_sidecar_with(
+            app,
+            options,
+            &reservation,
+            (!audio_absent).then_some(temp_audio_path.as_path()),
+            resolved_audio_quality,
+            cancel_token.clone(),
+            copy_audio,
+        )
+        .await?;
+
         // Subtitle processing
         let (subtitle_mode, subtitle_language_labels, subtitle_failed_labels) =
             prepare_subtitle_mode(
@@ -1455,7 +1626,8 @@ async fn download_video_impl_with<R: tauri::Runtime>(
             .map(|m| m.len());
 
         // Finalize: rename the staging file to the user-visible name.
-        let final_path = reservation.complete()?;
+        let final_path =
+            finish_video_with_audio_sidecar(app, reservation, audio_sidecar, &options.download_id)?;
 
         log::info!(
             "[BE] download_video: download complete id={}, size={:?}bytes",
@@ -2221,6 +2393,7 @@ mod tests {
             filename: "video".into(),
             quality: Some(80),
             audio_quality: Some(30280),
+            save_audio_with_video: false,
             download_id: download_id.into(),
             parent_id: None,
             duration_seconds: 10,
@@ -2311,6 +2484,113 @@ mod tests {
         })
     }
 
+    fn fake_copy_audio<'a>(
+        source: &'a Path,
+        output: &'a Path,
+        _cancel: CancellationToken,
+    ) -> AudioCopyFuture<'a> {
+        Box::pin(async move {
+            tokio::fs::copy(source, output)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    fn failing_copy_audio<'a>(
+        _source: &'a Path,
+        _output: &'a Path,
+        _cancel: CancellationToken,
+    ) -> AudioCopyFuture<'a> {
+        Box::pin(async { Err("simulated audio copy failure".to_string()) })
+    }
+
+    #[tokio::test]
+    async fn audio_sidecar_keeps_source_bytes_and_extension_until_video_finishes() {
+        for (quality, extension) in [(Some(30280), "m4a"), (Some(30251), "flac")] {
+            let app = tauri::test::mock_app();
+            let dir = tempfile::tempdir().unwrap();
+            let video_path = dir.path().join("video.mp4");
+            let reservation = reserve_output_path(&video_path).unwrap();
+            std::fs::write(reservation.reserved_path(), b"finished video").unwrap();
+            let audio = dir.path().join("audio.m4s");
+            std::fs::write(&audio, b"unaltered audio track").unwrap();
+            let mut options = pr5_options(&format!("sidecar-{extension}"), None);
+            options.save_audio_with_video = true;
+
+            let sidecar = prepare_audio_sidecar_with(
+                app.handle(),
+                &options,
+                &reservation,
+                Some(audio.as_path()),
+                quality,
+                CancellationToken::new(),
+                &fake_copy_audio,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let audio_path = dir.path().join(format!("video.{extension}"));
+            assert!(!audio_path.exists(), "sidecar must wait for video finalize");
+            assert_eq!(
+                std::fs::read(sidecar.reserved_path()).unwrap(),
+                b"unaltered audio track"
+            );
+
+            let saved_video = finish_video_with_audio_sidecar(
+                app.handle(),
+                reservation,
+                Some(sidecar),
+                &options.download_id,
+            )
+            .unwrap();
+            assert_eq!(saved_video, video_path);
+            assert_eq!(
+                std::fs::read(&audio_path).unwrap(),
+                b"unaltered audio track"
+            );
+            assert!(!lock_sidecar_path(&audio_path).exists());
+            assert!(!dir.path().join(format!("video.part.{extension}")).exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn optional_sidecar_failure_keeps_the_video_and_removes_partial_audio() {
+        let app = tauri::test::mock_app();
+        let dir = tempfile::tempdir().unwrap();
+        let video_path = dir.path().join("video.mp4");
+        let reservation = reserve_output_path(&video_path).unwrap();
+        std::fs::write(reservation.reserved_path(), b"finished video").unwrap();
+        let audio = dir.path().join("audio.m4s");
+        std::fs::write(&audio, b"audio").unwrap();
+        let mut options = pr5_options("sidecar-failure", None);
+        options.save_audio_with_video = true;
+
+        let sidecar = prepare_audio_sidecar_with(
+            app.handle(),
+            &options,
+            &reservation,
+            Some(audio.as_path()),
+            Some(30280),
+            CancellationToken::new(),
+            &failing_copy_audio,
+        )
+        .await
+        .unwrap();
+        assert!(sidecar.is_none());
+        let saved_video = finish_video_with_audio_sidecar(
+            app.handle(),
+            reservation,
+            sidecar,
+            &options.download_id,
+        )
+        .unwrap();
+        assert_eq!(saved_video, video_path);
+        assert_eq!(std::fs::read(&video_path).unwrap(), b"finished video");
+        assert!(!dir.path().join("video.m4a").exists());
+        assert!(!dir.path().join("video.part.m4a").exists());
+    }
+
     /// Merge stand-in that must never run (durl bypasses the merge step).
     fn unused_merge<'a>(
         _video_path: &'a Path,
@@ -2359,6 +2639,7 @@ mod tests {
             1,
             crate::utils::codec::VideoCodecPriority::default(),
             &fake_merge,
+            &fake_copy_audio,
         )
         .await
         .unwrap();
@@ -2376,6 +2657,52 @@ mod tests {
         assert!(!lib.path().join("temp_audio_pr5-dash.m4s").exists());
         assert!(!lib.path().join("temp_video_pr5-dash.m4s.lock").exists());
         assert!(!lib.path().join("temp_audio_pr5-dash.m4s.lock").exists());
+    }
+
+    #[tokio::test]
+    async fn audio_sidecar_dash_download_saves_original_track() {
+        let server = wiremock::MockServer::start().await;
+        let video: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+        let audio: Vec<u8> = (0..4096u32).map(|i| (i % 241) as u8).collect();
+        mount_good_media(&server, "/media/v", video.clone()).await;
+        mount_good_media(&server, "/media/a", audio.clone()).await;
+        mount_dash_playurl(
+            &server,
+            &format!("{}/media/v", server.uri()),
+            &format!("{}/media/a", server.uri()),
+        )
+        .await;
+        let transport = BiliApi::new(
+            Client::builder().pool_max_idle_per_host(0).build().unwrap(),
+            server.uri(),
+            "",
+        );
+        let lib = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let app = tauri::test::mock_app();
+        let mut options = pr5_options("sidecar-dash-download", None);
+        options.save_audio_with_video = true;
+        let path = download_video_impl_with(
+            app.handle(),
+            &options,
+            &transport,
+            lib.path(),
+            &out.path().join("video.mp4"),
+            1,
+            crate::utils::codec::VideoCodecPriority::default(),
+            &fake_merge,
+            &fake_copy_audio,
+        )
+        .await
+        .unwrap();
+
+        let mut merged = video;
+        merged.extend_from_slice(&audio);
+        assert_eq!(Path::new(&path), out.path().join("video.mp4"));
+        assert_eq!(std::fs::read(&path).unwrap(), merged);
+        assert_eq!(std::fs::read(out.path().join("video.m4a")).unwrap(), audio);
+        assert!(!out.path().join("video.part.m4a").exists());
+        assert!(!out.path().join("video.m4a.lock").exists());
     }
 
     #[tokio::test]
@@ -2414,6 +2741,7 @@ mod tests {
             1,
             crate::utils::codec::VideoCodecPriority::default(),
             &unused_merge,
+            &fake_copy_audio,
         )
         .await
         .unwrap();
@@ -2423,6 +2751,54 @@ mod tests {
         assert_eq!(std::fs::read(&expected_final).unwrap(), body);
         assert!(!out_dir.path().join("video.part.mp4").exists());
         assert!(!out_dir.path().join("video.mp4.lock").exists());
+    }
+
+    #[tokio::test]
+    async fn audio_sidecar_regular_durl_copies_embedded_track() {
+        let server = wiremock::MockServer::start().await;
+        let muxed: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+        mount_good_media(&server, "/media/mux", muxed.clone()).await;
+        wiremock::Mock::given(wiremock::matchers::path("/x/web-interface/nav"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(nav_wbi_mock_body()))
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::path("/x/player/wbi/playurl"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "code": 0, "message": "0",
+                    "data": {"quality": 64, "durl": [{
+                        "order": 1, "length": 1000, "size": muxed.len() as i64,
+                        "url": format!("{}/media/mux", server.uri())
+                    }]}
+                })),
+            )
+            .mount(&server)
+            .await;
+        let transport = BiliApi::new(
+            Client::builder().pool_max_idle_per_host(0).build().unwrap(),
+            server.uri(),
+            "",
+        );
+        let lib = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let app = tauri::test::mock_app();
+        let mut options = pr5_options("sidecar-durl-download", None);
+        options.save_audio_with_video = true;
+        download_video_impl_with(
+            app.handle(),
+            &options,
+            &transport,
+            lib.path(),
+            &out.path().join("video.mp4"),
+            1,
+            crate::utils::codec::VideoCodecPriority::default(),
+            &unused_merge,
+            &fake_copy_audio,
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(out.path().join("video.mp4")).unwrap(), muxed);
+        assert_eq!(std::fs::read(out.path().join("video.m4a")).unwrap(), muxed);
     }
 
     #[tokio::test]
@@ -2447,6 +2823,7 @@ mod tests {
             1,
             crate::utils::codec::VideoCodecPriority::default(),
             &fake_merge,
+            &fake_copy_audio,
         )
         .await
         .unwrap();
@@ -2486,6 +2863,7 @@ mod tests {
             1,
             crate::utils::codec::VideoCodecPriority::default(),
             &failing_merge,
+            &fake_copy_audio,
         )
         .await
         .unwrap_err();
@@ -2521,6 +2899,7 @@ mod tests {
             1,
             crate::utils::codec::VideoCodecPriority::default(),
             &fake_merge,
+            &fake_copy_audio,
         )
         .await
         .unwrap_err();
@@ -2576,6 +2955,7 @@ mod tests {
             1,
             crate::utils::codec::VideoCodecPriority::default(),
             &fake_merge,
+            &fake_copy_audio,
         )
         .await
         .unwrap();
@@ -2589,7 +2969,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn download_video_impl_bangumi_durl_downloads_muxed_stream() {
+    async fn audio_sidecar_bangumi_durl_downloads_muxed_stream() {
         // Bangumi served in the legacy durl format (no dash): the muxed MP4
         // downloads straight to staging and finalizes without a merge
         // (unused_merge panics if the merge step is ever reached).
@@ -2617,6 +2997,7 @@ mod tests {
         let app = tauri::test::mock_app();
         let mut options = pr5_options("pr5-bangumi-durl", Some(999));
         options.quality = Some(64);
+        options.save_audio_with_video = true;
         let final_path = download_video_impl_with(
             app.handle(),
             &options,
@@ -2626,6 +3007,7 @@ mod tests {
             1,
             crate::utils::codec::VideoCodecPriority::default(),
             &unused_merge,
+            &fake_copy_audio,
         )
         .await
         .unwrap();
@@ -2633,6 +3015,10 @@ mod tests {
         let expected_final = out_dir.path().join("video.mp4");
         assert_eq!(PathBuf::from(&final_path), expected_final);
         assert_eq!(std::fs::read(&expected_final).unwrap(), body);
+        assert_eq!(
+            std::fs::read(out_dir.path().join("video.m4a")).unwrap(),
+            body
+        );
         assert!(!out_dir.path().join("video.part.mp4").exists());
         assert!(!out_dir.path().join("video.mp4.lock").exists());
     }
@@ -2716,6 +3102,7 @@ mod tests {
             1,
             crate::utils::codec::VideoCodecPriority::default(),
             &unused_merge,
+            &fake_copy_audio,
         )
         .await
         .unwrap();
@@ -2758,6 +3145,7 @@ mod tests {
             1,
             crate::utils::codec::VideoCodecPriority::default(),
             &fake_merge,
+            &fake_copy_audio,
         )
         .await
         .unwrap();
@@ -2822,6 +3210,7 @@ mod tests {
             1,
             crate::utils::codec::VideoCodecPriority::default(),
             &fake_merge,
+            &fake_copy_audio,
         )
         .await
         .unwrap();

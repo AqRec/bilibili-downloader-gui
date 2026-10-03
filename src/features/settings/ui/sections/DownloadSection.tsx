@@ -115,6 +115,17 @@ export function DownloadSection() {
           {t('settings.output_dir_description')}
         </p>
       </SettingField>
+      <SettingRow
+        label={t('settings.save_audio_with_video_label')}
+        description={t('settings.save_audio_with_video_description')}
+      >
+        <Switch
+          checked={settings.saveAudioWithVideo ?? false}
+          onCheckedChange={(checked) => {
+            void saveByForm({ saveAudioWithVideo: checked })
+          }}
+        />
+      </SettingRow>
       {/* Why: one separator per group boundary, not per item — issue #693 allows
           adjacent settings in the same group to go undivided */}
       <Separator />

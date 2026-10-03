@@ -88,6 +88,7 @@ and remains available after an application update.
 ### Download
 
 - **High-quality video download** - Choose any quality from 8K/4K/1080p/720p/HDR10/Dolby Vision
+- **Original audio alongside videos** - Enable in Download settings to stream-copy the selected audio to M4A beside each MP4 (Hi-Res FLAC remains FLAC), without re-encoding; video downloads still complete if the optional copy fails
 - **Bangumi (anime & series) support** - Download anime and series episodes alongside regular videos
 - **Multi-part video batch save** - Automatically download all parts of courses, series, etc.
 - **Fast & stable downloads** - Auto CDN switching with automatic retry on network errors

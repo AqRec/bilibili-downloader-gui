@@ -170,6 +170,14 @@ pub struct Settings {
         skip_serializing_if = "Option::is_none"
     )]
     pub audio_format: Option<AudioFormat>,
+    /// Save a stream-copied audio file alongside downloaded videos.
+    /// Absent settings remain off so existing downloads are unchanged.
+    #[serde(
+        rename = "saveAudioWithVideo",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub save_audio_with_video: Option<bool>,
     /// Default output format for the GIF/WebM animation generator feature.
     /// Defaults to "gif" if not specified.
     #[serde(rename = "gifFormat", default, skip_serializing_if = "Option::is_none")]
@@ -530,6 +538,18 @@ mod tests {
         let s: Settings =
             serde_json::from_str(r#"{"dlOutputPath": "/tmp/a", "language": "en"}"#).unwrap();
         assert_eq!(s.skipped_update_version, None);
+        assert_eq!(s.save_audio_with_video, None);
+    }
+
+    #[test]
+    fn video_audio_sidecar_setting_roundtrips_without_affecting_old_settings() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"language":"en","saveAudioWithVideo":true}"#).unwrap();
+        assert_eq!(settings.save_audio_with_video, Some(true));
+        assert_eq!(
+            serde_json::to_value(settings).unwrap()["saveAudioWithVideo"],
+            true
+        );
     }
 
     // ---- resolve_download_speed_limit_bps (issue #421) ----

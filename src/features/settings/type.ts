@@ -95,6 +95,8 @@ export interface Settings {
    * Defaults to 'mp3' if not specified.
    */
   audioFormat?: AudioFormat
+  /** Save the original video audio as M4A (FLAC for lossless sources). Off by default. */
+  saveAudioWithVideo?: boolean
   /**
    * Default output format for the GIF/WebM animation generator feature.
    * Defaults to 'gif' if not specified.

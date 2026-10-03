@@ -10,6 +10,7 @@
 // The store must load before videoApi to break the circular import
 // (store registers the api middleware, api imports the store).
 import { store } from '@/app/store'
+import { setSettings } from '@/features/settings/settingsSlice'
 import { videoApi } from '@/features/video/api/videoApi'
 import {
   resetInput,
@@ -128,6 +129,7 @@ beforeEach(() => {
   store.dispatch(videoApi.util.resetApiState())
   store.dispatch(resetInput())
   store.dispatch(resetVideo())
+  store.dispatch(setSettings({ saveAudioWithVideo: false }))
   resetQueue()
   store.dispatch(clearProgress())
   store.dispatch(clearDownloadError())
@@ -550,6 +552,23 @@ describe('download', () => {
       audioStage: true,
       mergeStage: true,
     })
+  })
+
+  it('snapshots the sidecar switch when a video is queued', async () => {
+    await setupForDownload()
+    act(() => {
+      store.dispatch(setSettings({ saveAudioWithVideo: true }))
+    })
+    await act(async () => {
+      await ctx.download()
+    })
+    const part = store.getState().queue.find((item) => item.kind === 'part')
+    expect(part?.payload?.saveAudioWithVideo).toBe(true)
+
+    act(() => {
+      store.dispatch(setSettings({ saveAudioWithVideo: false }))
+    })
+    expect(part?.payload?.saveAudioWithVideo).toBe(true)
   })
 
   it('is a no-op while form 1 is invalid', async () => {

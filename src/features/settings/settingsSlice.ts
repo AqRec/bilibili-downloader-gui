@@ -19,6 +19,7 @@ const initialState: Settings = {
   fontSize: FONT_SIZE_DEFAULT,
   trimMode: 'copy',
   audioFormat: 'mp3',
+  saveAudioWithVideo: false,
   theme: 'light',
   showTaskbarProgress: true,
   flashTaskbarOnComplete: true,

@@ -148,6 +148,9 @@ export function VideoInfoProvider({ children }: VideoInfoProviderProps) {
   const progress = useSelector((state) => state.progress)
   const video = useSelector((state) => state.video)
   const input = useSelector((state) => state.input)
+  const saveAudioWithVideo = useSelector(
+    (state) => state.settings.saveAudioWithVideo ?? false,
+  )
   const [triggerFetch, { isFetching: isFetchingVideo }] =
     useLazyFetchVideoInfoQuery()
   const [triggerFetchBangumi, { isFetching: isFetchingBangumi }] =
@@ -453,6 +456,7 @@ export function VideoInfoProvider({ children }: VideoInfoProviderProps) {
           filename: title,
           quality: pi.videoQuality ? parseInt(pi.videoQuality, 10) : null,
           audioQuality: pi.audioQuality ? parseInt(pi.audioQuality, 10) : null,
+          saveAudioWithVideo,
           durationSeconds: pi.duration,
           thumbnailUrl: pi.thumbnailUrl ?? null,
           page: pi.page,
@@ -488,7 +492,15 @@ export function VideoInfoProvider({ children }: VideoInfoProviderProps) {
         updatePartSelected({ index: spec.partIndex - 1, selected: false }),
       )
     }
-  }, [isForm1Valid, isForm2ValidAll, videoId, input.partInputs, video, t])
+  }, [
+    isForm1Valid,
+    isForm2ValidAll,
+    videoId,
+    input.partInputs,
+    video,
+    saveAudioWithVideo,
+    t,
+  ])
 
   const value: VideoInfoContextValue = {
     progress,

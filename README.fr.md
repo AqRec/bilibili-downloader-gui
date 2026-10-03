@@ -73,6 +73,7 @@ Extrayez l'intégralité du ZIP avant d'exécuter le programme. Les deux éditio
 ### Téléchargement
 
 - **Téléchargement vidéo haute qualité** - Choisissez n'importe quelle qualité : 8K/4K/1080p/720p/HDR10/Dolby Vision
+- **Audio original avec la vidéo** - Activez-le dans les paramètres de téléchargement pour copier la piste choisie en M4A près du MP4 sans réencodage (le FLAC sans perte reste en FLAC). La vidéo est enregistrée même si la copie audio facultative échoue
 - **Prise en charge de Bangumi (anime et séries)** - Téléchargez des épisodes d'anime et de séries en plus des vidéos régulières
 - **Sauvegarde par lot de vidéos multi-parties** - Téléchargez automatiquement toutes les parties de cours, séries, etc.
 - **Téléchargements rapides et stables** - Changement automatique de CDN avec réessai automatique en cas d'erreurs réseau

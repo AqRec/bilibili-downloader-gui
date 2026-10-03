@@ -33,6 +33,7 @@ const baseline: Settings = {
   fontSize: 14,
   trimMode: 'copy',
   audioFormat: 'mp3',
+  saveAudioWithVideo: false,
   theme: 'light',
   // Why explicit: setSettings shallow-merges, so a speed-limit test that
   // enabled the switch would leak `true` into later tests via the
@@ -73,6 +74,20 @@ describe('DownloadSection', () => {
     renderWithProviders(<DownloadSection />)
 
     expect(screen.getByDisplayValue('/downloads/out')).toBeInTheDocument()
+  })
+
+  it('persists the original-audio sidecar switch independently', async () => {
+    const { user } = renderWithProviders(<DownloadSection />)
+    const row = screen
+      .getByText('settings.save_audio_with_video_label')
+      .closest('div.flex.items-center.justify-between')!
+    const toggle = row.querySelector('button[role="switch"]') as HTMLElement
+    expect(toggle).toHaveAttribute('data-state', 'unchecked')
+
+    await user.click(toggle)
+    await waitFor(() =>
+      expect(lastSetSettings()).toEqual({ saveAudioWithVideo: true }),
+    )
   })
 
   // --- Download output path picker ------------------------------------------

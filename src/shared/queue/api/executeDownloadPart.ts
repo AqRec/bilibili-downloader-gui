@@ -30,6 +30,7 @@ export const executeDownloadPart: PartExecutor = async (payload, ids) => {
       filename: payload.filename,
       quality: payload.quality,
       audioQuality: payload.audioQuality,
+      ...(payload.saveAudioWithVideo && { saveAudioWithVideo: true }),
       downloadId: ids.downloadId,
       parentId: ids.parentId,
       durationSeconds: payload.durationSeconds,

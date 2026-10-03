@@ -87,6 +87,8 @@ export type DownloadPartPayload = {
   quality: number | null
   /** Audio quality ID (e.g., 30216 for 64K), null for durl format */
   audioQuality: number | null
+  /** Snapshot of the opt-in source-audio sidecar preference. */
+  saveAudioWithVideo?: boolean
   /** Duration in seconds for merge progress calculation */
   durationSeconds: number
   /** Thumbnail URL for history */
